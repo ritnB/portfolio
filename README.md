@@ -18,7 +18,7 @@ Train models to predict crypto market trends using sentiment and technical indic
 
 ---
 
-## 🔹 2. `Automated Data Processing Status Dashboard` – Dashboard API
+## 🔹 2. `Automated Data Processing Status Dashboard/` – Dashboard API
 
 **Purpose:**  
 Automatically update Google Sheets dashboards with processed data for monitoring.
