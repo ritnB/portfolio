@@ -31,12 +31,14 @@ Automatically update Google Sheets dashboards with processed data for monitoring
 
 ---
 
-## ⚙️ Stack
+## ⚙️ Tech Stack
 
-- **ML**: PyTorch, HuggingFace Transformers  
-- **Backend**: Flask, gspread, Supabase  
-- **Deployment**: Docker, GCP Cloud Run  
-- **Scheduling**: GCP Cloud Scheduler  
+- **ML/NLP**: PyTorch, Transformers (BERTweet), HuggingFace, scikit-learn
+- **Time Series**: PatchTST, custom windowed dataset, CrossEntropy loss
+- **Data Handling**: pandas, numpy, joblib, StandardScaler
+- **Backend/API**: Flask, Supabase (Python SDK), gspread, Google Sheets API
+- **Deployment**: Docker, Gunicorn, GCP Cloud Run, GCP Cloud Scheduler
+- **Automation**: Scheduled inference and dashboard updates
 
 ---
 
