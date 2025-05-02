@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.pyo
+*.log
+*.ipynb
+.ipynb_checkpoints/
+
+.env          
+models/*/checkpoint*
+models/*/pytorch_model.bin.index.json
