@@ -6,7 +6,7 @@ __pycache__/
 .env
 .env.*
 
-# OS/editor
+# Editor & OS
 .DS_Store
 .vscode/
 .idea/
@@ -15,17 +15,16 @@ __pycache__/
 *.log
 *.tmp
 
-# Deployment artifacts
+# Local files
+instance/
 *.db
 *.sqlite3
 
-# Local testing output
-instance/
-*.json
-
-# Model artifacts (if fetched or cached)
-*.pkl
+# ML artifacts
 *.pt
+*.pkl
+*.joblib
 
-# GCP credentials (절대 포함 X)
-*.json
+# Supabase/GCP credentials
+credentials.json
+*service*.json
