@@ -4,7 +4,7 @@ A full-stack project for analyzing and monitoring cryptocurrency market trends u
 
 ---
 
-## 🔹 1. `antMeter/` – ML Training Pipeline
+## 🔹 1. `Crypto Price Forecasting/` – ML Training Pipeline
 
 **Purpose:**  
 Train models to predict crypto market trends using sentiment and technical indicators.
@@ -18,7 +18,7 @@ Train models to predict crypto market trends using sentiment and technical indic
 
 ---
 
-## 🔹 2. `antmeter_visualization/` – Dashboard API
+## 🔹 2. `Automated Data Processing Status Dashboard` – Dashboard API
 
 **Purpose:**  
 Automatically update Google Sheets dashboards with processed data for monitoring.
