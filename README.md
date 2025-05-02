@@ -1,4 +1,4 @@
-# 🧠 antMeter – Crypto Trend Forecasting & Monitoring
+# 🧠 Crypto Trend Forecasting & Monitoring
 
 A full-stack project for analyzing and monitoring cryptocurrency market trends using machine learning and automated dashboards.
 
