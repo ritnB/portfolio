@@ -1,58 +1,44 @@
-# 🧠 Crypto Trend Forecasting & Monitoring
+# 📁 ML Engineer Portfolio – Mincheol Shin
 
-A full-stack project for analyzing and monitoring cryptocurrency market trends using machine learning and automated dashboards.
+Welcome! This repository showcases selected machine learning and full-stack projects that highlight my work in:
 
----
-
-## 🔹 1. `Crypto Price Forecasting/` – ML Training Pipeline
-
-**Purpose:**  
-Train models to predict crypto market trends using sentiment and technical indicators.
-
-**Highlights:**  
-- Sentiment classification with BERTweet  
-- Time-series forecasting with PatchTST  
-- EDA-based text augmentation  
-- Early stopping with F1 & loss threshold  
-- Model outputs: HuggingFace + PyTorch (.pt)
+- Trajectory-based sequence modeling for anomaly detection  
+- NLP + time-series forecasting for crypto trend analysis  
+- Full-stack automation with dashboards, APIs, and cloud deployment  
 
 ---
 
-## 🔹 2. `Automated Data Processing Status Dashboard/` – Dashboard API
+## 🛰️ 1. [Trajectory-Based UAV Location Integrity](./trajectory_uav_integrity/)
 
-**Purpose:**  
-Automatically update Google Sheets dashboards with processed data for monitoring.
+**Goal:** Detect GPS spoofing and location falsification attacks on UAVs  
+**Approach:** Sequence-based modeling using RNN/Transformer without GPS signal features  
+**Highlights:**
+- Sequence construction & feature extraction (Δpos, Δtime, velocity, direction)
+- Fully GPS-agnostic integrity analysis
+- Published in IEEE Access (2024)
 
-**Highlights:**  
-- Flask API to sync Supabase → Google Sheets  
-- Shows data processing status (daily)  
-- Deployable to GCP Cloud Run + Cloud Scheduler  
-- Secure `.env` and credential handling
-
----
-
-## ⚙️ Tech Stack
-
-- **ML/NLP**: PyTorch, Transformers (BERTweet), HuggingFace, scikit-learn
-- **Time Series**: PatchTST, custom windowed dataset, CrossEntropy loss
-- **Data Handling**: pandas, numpy, joblib, StandardScaler
-- **Backend/API**: Flask, Supabase (Python SDK), gspread, Google Sheets API
-- **Deployment**: Docker, Gunicorn, GCP Cloud Run, GCP Cloud Scheduler
-- **Automation**: Scheduled inference and dashboard updates
+🔗 [Read full description](./trajectory_uav_integrity/README.md)
 
 ---
 
-## 📁 Structure
-portfoilo/
-├── antMeter/ # ML training pipeline
-├── antmeter_visualization/ # Dashboard backend API
-└── README.md # ← this file
+## 📈 2. [Crypto Trend Forecasting & Monitoring](./portfoilo/)
 
+**Goal:** Predict crypto market trends and automate monitoring via dashboards  
+**Approach:** BERTweet + PatchTST forecasting with full-stack automation  
+**Highlights:**
+- Sentiment classification + time-series forecasting
+- Supabase → Google Sheets dashboard API
+- Deployed on GCP with Cloud Scheduler
+
+🔗 [Read full description](./portfoilo/README.md)
 
 ---
 
-## 👤 Author
+## 👤 About Me
 
-Mincheol Shin  
-🔗 [LinkedIn](https://www.linkedin.com/in/min-shin-9a8797340/)
+**Mincheol Shin**  
+Machine Learning Engineer with focus on time-series, NLP, and automation.
+
+🔗 [LinkedIn](https://www.linkedin.com/in/min-shin-9a8797340/)  
 🔗 [GitHub](https://github.com/ritnB)
+
