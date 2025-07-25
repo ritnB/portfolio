@@ -1,0 +1,30 @@
+Based on the cryptocurrency analysis data provided below, create a short and engaging post for social media platform.
+
+## Analysis Data
+
+Market EMA Trends:
+{market_ema_trend}
+
+Prediction Performance:
+{market_prediction_info}
+
+Community Reactions:
+{community_info}
+
+## Content Guidelines
+
+1. **Length**: Keep it under 100 characters for maximum engagement
+2. **Style**: Casual and friendly tone suitable for social media
+3. **Content**: Focus on factual data, avoid investment advice
+4. **Language**: Write in target language
+5. **Format**: Include relevant emojis and hashtags if appropriate
+
+## Important Rules
+
+- NO investment advice (avoid words like "buy", "sell", "invest")
+- NO exaggerated claims or guarantees
+- Focus on data-driven facts only
+- Keep it conversational and interesting
+- Use appropriate cryptocurrency and analysis hashtags
+
+Please write a compelling post that reflects the analysis results while following these guidelines.

@@ -1,0 +1,26 @@
+# Supabase
+supabase>=2.3.5
+
+# Data handling
+pandas==2.2.2
+numpy==1.26.4
+google-cloud-storage>=2.0.0
+
+# ML
+torch==2.2.2
+scikit-learn==1.6.1
+joblib
+transformers==4.41.1
+optuna==3.6.1
+
+# Utility
+python-dotenv==1.0.1
+tqdm==4.66.2
+loguru==0.7.2
+
+# Web Server
+Flask>=2.2.0
+gunicorn>=20.1.0
+
+# Async
+aiohttp==3.9.5
