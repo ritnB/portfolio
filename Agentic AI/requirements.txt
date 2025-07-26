@@ -1,0 +1,27 @@
+# LangChain + OpenAI (Python 3.8 compatible)
+langchain>=0.1.0
+langchain-openai>=0.0.5
+langchain-community>=0.0.10
+
+# Free LLM model support
+huggingface-hub>=0.19.0
+transformers>=4.35.0
+
+# Data processing (Python 3.8 compatible)
+pandas>=1.5.0
+numpy>=1.24.0
+requests>=2.31.0
+
+# Environment variables
+python-dotenv>=1.0.0
+
+# Logging/utilities
+loguru>=0.7.0
+
+# Web server (Flask + Gunicorn for Cloud Run)
+flask>=2.3.0
+gunicorn>=21.0.0
+
+# Testing (development)
+pytest>=7.4.0
+pytest-mock>=3.10.0

@@ -1,192 +1,176 @@
-# analyzers/trend_analyzer.py - EMA-based surge/crash analysis
-from datetime import datetime, timedelta
-from typing import Dict, List, Tuple, Optional
+# analyzers/trend_analyzer.py - EMA-based Surge/Crash Analysis
 import pandas as pd
+import numpy as np
+from datetime import datetime, timedelta
 from loguru import logger
-
 from supabase import create_client
 from config import (
     SUPABASE_URL, SUPABASE_KEY, SUPABASE_MARKET_TABLE,
-    RECENT_DAYS, SURGE_THRESHOLD, CRASH_THRESHOLD, MAX_COINS_TO_ANALYZE
+    SURGE_THRESHOLD, CRASH_THRESHOLD, RECENT_DAYS, TREND_TOP_COUNT
 )
 
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+def calculate_ema(prices: list, period: int = 12) -> list:
+    """Calculate Exponential Moving Average"""
+    if len(prices) < period:
+        return prices
+    
+    ema_values = []
+    multiplier = 2 / (period + 1)
+    
+    # First EMA is SMA
+    sma = sum(prices[:period]) / period
+    ema_values.append(sma)
+    
+    # Calculate EMA for remaining values
+    for price in prices[period:]:
+        ema = (price * multiplier) + (ema_values[-1] * (1 - multiplier))
+        ema_values.append(ema)
+    
+    return ema_values
 
-
-def get_ema_data(days: int = RECENT_DAYS) -> pd.DataFrame:
-    """Collect EMA data"""
-    since = datetime.utcnow() - timedelta(days=days)
-    
-    page_size = 1000
-    page = 0
-    all_records = []
-    
-    while True:
-        start = page * page_size
-        end = start + page_size - 1
-        
-        response = (
-            supabase.table(SUPABASE_MARKET_TABLE)
-            .select("coin, timestamp, ema")
-            .gte("timestamp", since.isoformat())
-            .order("timestamp", desc=False)
-            .range(start, end)
-            .execute()
-        )
-        
-        page_data = response.data
-        if not page_data:
-            break
-            
-        all_records.extend(page_data)
-        page += 1
-    
-    if not all_records:
-        logger.warning("No EMA data available.")
-        return pd.DataFrame()
-    
-    df = pd.DataFrame(all_records)
-    df["timestamp"] = pd.to_datetime(df["timestamp"])
-    df = df.sort_values(["coin", "timestamp"])
-    
-    return df
-
-
-def calculate_ema_change_rate(df: pd.DataFrame) -> pd.DataFrame:
-    """Calculate EMA change rate"""
-    if df.empty:
-        return df
-    
-    # Calculate change rate by coin
-    df = df.copy()
-    df["ema_pct_change"] = df.groupby("coin")["ema"].pct_change() * 100
-    
-    # Remove first value (change rate cannot be calculated)
-    df = df.dropna(subset=["ema_pct_change"])
-    
-    return df
-
-
-def detect_surge_crash(df: pd.DataFrame) -> Dict[str, List[Dict]]:
-    """Detect surge/crash coins"""
-    if df.empty:
-        return {"surge": [], "crash": []}
-    
-    # Surge coins (above threshold increase)
-    surge_mask = df["ema_pct_change"] >= SURGE_THRESHOLD
-    surge_coins = df[surge_mask].copy()
-    
-    # Crash coins (below threshold decrease)
-    crash_mask = df["ema_pct_change"] <= CRASH_THRESHOLD
-    crash_coins = df[crash_mask].copy()
-    
-    def format_coin_data(coin_df: pd.DataFrame) -> List[Dict]:
-        result = []
-        for _, row in coin_df.iterrows():
-            result.append({
-                "coin": row["coin"],
-                "timestamp": row["timestamp"].isoformat(),
-                "ema": row["ema"],
-                "change_rate": round(row["ema_pct_change"], 2)
-            })
-        return result
-    
-    return {
-        "surge": format_coin_data(surge_coins),
-        "crash": format_coin_data(crash_coins)
-    }
-
-
-def get_top_trending_coins(trend_data: Dict, limit: int = MAX_COINS_TO_ANALYZE) -> Dict:
-    """Extract coins with the largest change rates"""
-    
-    # Sort surge coins (by largest change rate)
-    surge_sorted = sorted(
-        trend_data["surge"], 
-        key=lambda x: x["change_rate"], 
-        reverse=True
-    )[:limit]
-    
-    # Sort crash coins (by largest absolute change rate)
-    crash_sorted = sorted(
-        trend_data["crash"], 
-        key=lambda x: abs(x["change_rate"]), 
-        reverse=True
-    )[:limit]
-    
-    return {
-        "surge": surge_sorted,
-        "crash": crash_sorted
-    }
-
-
-def analyze_coin_trends() -> Dict:
-    """Comprehensive coin trend analysis"""
+def analyze_trends(target_coins: list = None) -> dict:
+    """Analyze cryptocurrency market trends using EMA"""
     try:
-        logger.info("📊 Starting coin trend analysis...")
+        # Initialize Supabase client
+        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
         
-        # Collect EMA data
-        ema_df = get_ema_data()
-        if ema_df.empty:
-            return {"error": "No EMA data available."}
+        # Get recent data
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=RECENT_DAYS)
         
-        # Calculate change rates
-        ema_df = calculate_ema_change_rate(ema_df)
+        # Query market data
+        response = supabase.table(SUPABASE_MARKET_TABLE).select("*").gte(
+            "timestamp", start_date.isoformat()
+        ).lte("timestamp", end_date.isoformat()).execute()
         
-        # Detect surge/crash
-        trend_data = detect_surge_crash(ema_df)
+        if not response.data:
+            return {"error": "No market data available"}
         
-        # Extract top coins
-        top_trends = get_top_trending_coins(trend_data)
+        # Convert to DataFrame
+        df = pd.DataFrame(response.data)
+        df['timestamp'] = pd.to_datetime(df['timestamp'])
+        df = df.sort_values(['coin', 'timestamp'])
         
-        # Statistics information
-        stats = {
-            "total_coins_analyzed": ema_df["coin"].nunique(),
-            "surge_coins_count": len(trend_data["surge"]),
-            "crash_coins_count": len(trend_data["crash"]),
-            "analysis_period_days": RECENT_DAYS,
-            "surge_threshold": SURGE_THRESHOLD,
-            "crash_threshold": CRASH_THRESHOLD
-        }
+        # Filter target coins if specified
+        if target_coins:
+            df = df[df['coin'].isin(target_coins)]
         
-        logger.success(f"✅ Trend analysis completed: {stats['surge_coins_count']} surge, {stats['crash_coins_count']} crash")
+        # Get unique coins
+        coins = df['coin'].unique()
+        
+        surge_coins = []
+        crash_coins = []
+        
+        for coin in coins:
+            coin_data = df[df['coin'] == coin].copy()
+            
+            if len(coin_data) < 2:
+                continue
+            
+            # Calculate EMA
+            prices = coin_data['price'].tolist()
+            ema_values = calculate_ema(prices)
+            
+            # Calculate change rate
+            if len(ema_values) >= 2:
+                current_ema = ema_values[-1]
+                previous_ema = ema_values[-2]
+                change_rate = ((current_ema - previous_ema) / previous_ema) * 100
+                
+                coin_info = {
+                    "coin": coin,
+                    "current_price": prices[-1],
+                    "ema": current_ema,
+                    "change_rate": change_rate,
+                    "timestamp": coin_data['timestamp'].iloc[-1].isoformat()
+                }
+                
+                # Categorize as surge or crash
+                if change_rate >= SURGE_THRESHOLD:
+                    surge_coins.append(coin_info)
+                elif change_rate <= CRASH_THRESHOLD:
+                    crash_coins.append(coin_info)
+        
+        # Sort by change rate
+        top_surge = sorted(surge_coins, key=lambda x: x["change_rate"], reverse=True)[:TREND_TOP_COUNT]
+        top_crash = sorted(crash_coins, key=lambda x: abs(x["change_rate"]), reverse=True)[:TREND_TOP_COUNT]
         
         return {
-            "trends": top_trends,
-            "stats": stats,
-            "raw_data": trend_data
+            "surge_coins": top_surge,
+            "crash_coins": top_crash,
+            "total_analyzed": len(coins),
+            "surge_count": len(surge_coins),
+            "crash_count": len(crash_coins)
         }
         
     except Exception as e:
-        logger.error(f"❌ Trend analysis failed: {e}")
+        logger.error(f"Trend analysis failed: {e}")
         return {"error": str(e)}
 
+def get_trend_analysis(target_coins: list = None) -> dict:
+    """Get comprehensive trend analysis"""
+    try:
+        # Collect EMA data
+        result = analyze_trends(target_coins)
+        
+        if "error" in result:
+            return result
+        
+        # Calculate change rates
+        surge_coins = result.get("surge_coins", [])
+        crash_coins = result.get("crash_coins", [])
+        
+        # Detect surges and crashes
+        trending_coins = surge_coins + crash_coins
+        
+        # Top trending coins
+        top_trending = sorted(trending_coins, key=lambda x: abs(x["change_rate"]), reverse=True)[:TREND_TOP_COUNT]
+        
+        # Statistics
+        stats = {
+            "total_analyzed": result.get("total_analyzed", 0),
+            "surge_count": len(surge_coins),
+            "crash_count": len(crash_coins),
+            "trending_count": len(trending_coins)
+        }
+        
+        return {
+            "surge_coins": surge_coins,
+            "crash_coins": crash_coins,
+            "top_trending": top_trending,
+            "statistics": stats
+        }
+        
+    except Exception as e:
+        logger.error(f"Trend analysis failed: {e}")
+        return {"error": str(e)}
 
-def format_trend_summary(analysis_result: Dict) -> str:
-    """Format trend analysis results to text"""
-    if "error" in analysis_result:
-        return f"Trend analysis error: {analysis_result['error']}"
+def format_trend_summary(result: dict) -> str:
+    """Format trend analysis results as summary"""
+    if "error" in result:
+        return f"Trend analysis failed: {result['error']}"
     
-    trends = analysis_result.get("trends", {})
-    stats = analysis_result.get("stats", {})
+    surge_coins = result.get("surge_coins", [])
+    crash_coins = result.get("crash_coins", [])
+    stats = result.get("statistics", {})
     
     summary_parts = []
     
     # Surge coins
-    if trends.get("surge"):
-        surge_list = []
-        for coin_data in trends["surge"][:3]:  # Top 3 only
-            surge_list.append(f"{coin_data['coin']} (+{coin_data['change_rate']}%)")
-        summary_parts.append(f"🚀 Surge: {', '.join(surge_list)}")
+    if surge_coins:
+        summary_parts.append("🚀 Surging coins:")
+        for coin in surge_coins[:3]:
+            summary_parts.append(f"  • {coin['coin']}: +{coin['change_rate']:.1f}%")
     
     # Crash coins
-    if trends.get("crash"):
-        crash_list = []
-        for coin_data in trends["crash"][:3]:  # Top 3 only
-            crash_list.append(f"{coin_data['coin']} ({coin_data['change_rate']}%)")
-        summary_parts.append(f"📉 Crash: {', '.join(crash_list)}")
+    if crash_coins:
+        summary_parts.append("📉 Crashing coins:")
+        for coin in crash_coins[:3]:
+            summary_parts.append(f"  • {coin['coin']}: {coin['change_rate']:.1f}%")
     
-    if not summary_parts:
-        return f"📊 No significant changes in the last {stats.get('analysis_period_days', RECENT_DAYS)} days"
+    # Statistics
+    summary_parts.append(f"📊 Analyzed {stats.get('total_analyzed', 0)} coins")
+    summary_parts.append(f"  • Surging: {stats.get('surge_count', 0)}")
+    summary_parts.append(f"  • Crashing: {stats.get('crash_count', 0)}")
     
     return "\n".join(summary_parts) 

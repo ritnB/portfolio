@@ -2,57 +2,81 @@ import sys
 import os
 import locale
 
-# ✅ Force system encoding setup (highest priority)
+# System encoding setup
 os.environ['PYTHONIOENCODING'] = 'utf-8'
 if sys.platform.startswith('win'):
     os.environ['PYTHONLEGACYWINDOWSSTDIO'] = '1'
 
-# ✅ Force default encoding to UTF-8
+# UTF-8 encoding setup
 if hasattr(sys, '_getframe'):
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
     sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
-# ✅ Locale setup
+# Locale setup
 try:
     locale.setlocale(locale.LC_ALL, 'C.UTF-8')
 except:
     try:
         locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
     except:
-        pass  # Continue execution even if locale setup fails
+        pass
 
-from flask import Flask, request, Response
-from agents.agent import run_agent
+# app.py - Flask Server (Cloud Run Endpoint)
+from flask import Flask, request, jsonify
+import os
+import sys
+
+# Set environment variables for Windows compatibility
+os.environ['PYTHONIOENCODING'] = 'utf-8'
+os.environ['PYTHONLEGACYWINDOWSSTDIO'] = '1'
+
+# Add project root to Python path
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+from agents.langchain_agent import create_langchain_agent
+from config import FLASK_HOST, FLASK_PORT, FLASK_DEBUG
 from loguru import logger
-import json
-import io
 
 app = Flask(__name__)
 
-@app.route("/agent", methods=["POST"])
-def agent_endpoint():
-    try:
-        logger.info("🟢 /agent request received")
-        result = run_agent()
-        logger.success("✅ Content generation completed")
-
-        # ✅ Use ensure_ascii=False to prevent Korean text corruption
-        return Response(
-            json.dumps(result, ensure_ascii=False),
-            content_type="application/json; charset=utf-8",
-            status=200
-        )
-    except Exception as e:
-        logger.error(f"❌ Error occurred: {e}")
-        return Response(
-            json.dumps({"status": "error", "message": str(e)}, ensure_ascii=False),
-            content_type="application/json; charset=utf-8",
-            status=500
-        )
-
-@app.route("/", methods=["GET"])
+@app.route('/health', methods=['GET'])
 def health_check():
-    return "Crypto Analysis Bot is running", 200
+    """Health check endpoint"""
+    return jsonify({"status": "healthy", "message": "Portfolio Agent is running"})
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8081, debug=True)
+@app.route('/analyze', methods=['POST'])
+def analyze_market():
+    """Market analysis endpoint"""
+    try:
+        # Execute agent
+        agent = create_langchain_agent()
+        result = agent.run("Analyze the current cryptocurrency market and generate high-quality content.")
+        
+        return jsonify({
+            "status": "success",
+            "result": result
+        })
+        
+    except Exception as e:
+        logger.error(f"Analysis failed: {e}")
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
+
+@app.route('/', methods=['GET'])
+def root():
+    """Root endpoint with project information"""
+    return jsonify({
+        "name": "Portfolio Agent",
+        "description": "AI-powered cryptocurrency market analysis agent",
+        "version": "1.0.0",
+        "endpoints": {
+            "health": "/health",
+            "analyze": "/analyze"
+        }
+    })
+
+if __name__ == '__main__':
+    logger.info(f"Starting Portfolio Agent server on {FLASK_HOST}:{FLASK_PORT}")
+    app.run(host=FLASK_HOST, port=FLASK_PORT, debug=FLASK_DEBUG)

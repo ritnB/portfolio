@@ -1,261 +1,202 @@
-# analyzers/sentiment_analyzer.py - Community sentiment analysis
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+# analyzers/sentiment_analyzer.py - Community Sentiment Analysis
 import pandas as pd
+import numpy as np
 import re
+from datetime import datetime, timedelta
+from collections import Counter
 from loguru import logger
-
 from supabase import create_client
 from config import (
     SUPABASE_URL, SUPABASE_KEY, SUPABASE_COMMUNITY_TABLE,
-    RECENT_DAYS, MAX_COINS_TO_ANALYZE
+    CRYPTO_KEYWORDS, POSITIVE_KEYWORDS, NEGATIVE_KEYWORDS, URGENCY_KEYWORDS,
+    SENTIMENT_TOP_COUNT, HOT_TOPICS_TOP_COUNT, KEYWORDS_TOP_COUNT, DB_PAGE_SIZE
 )
 
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-
-
-def get_community_data(days: int = RECENT_DAYS, target_coins: List[str] = None) -> pd.DataFrame:
-    """Collect community comment data"""
-    since = datetime.utcnow() - timedelta(days=days)
-    
-    page_size = 1000
-    page = 0
-    all_records = []
-    
-    while True:
-        start = page * page_size
-        end = start + page_size - 1
-        
-        query = (
-            supabase.table(SUPABASE_COMMUNITY_TABLE)
-            .select("coin, timestamp, text, sentimental")
-            .gte("timestamp", since.isoformat())
-            .order("timestamp", desc=False)
-            .range(start, end)
-        )
-        
-        # Filter specific coins
-        if target_coins:
-            query = query.in_("coin", target_coins)
-        
-        response = query.execute()
-        page_data = response.data
-        
-        if not page_data:
-            break
-            
-        all_records.extend(page_data)
-        page += 1
-    
-    if not all_records:
-        logger.warning("No community data available.")
-        return pd.DataFrame()
-    
-    df = pd.DataFrame(all_records)
-    df["timestamp"] = pd.to_datetime(df["timestamp"])
-    df = df.sort_values(["coin", "timestamp"])
-    
-    return df
-
-
-def extract_trending_topics(df: pd.DataFrame) -> Dict:
-    """Extract trending topics"""
-    if df.empty:
-        return {"topics": [], "keywords": []}
+def extract_keywords(text: str) -> list:
+    """Extract cryptocurrency-related keywords from text"""
+    if not text:
+        return []
     
     # Text preprocessing
-    all_text = " ".join(df["text"].dropna().astype(str))
+    text = text.lower()
     
     # Simple keyword extraction (regex-based)
-    # Cryptocurrency-related keywords (Korean patterns)
-    crypto_keywords = [
-        r'급등\w*', r'급락\w*', r'상승\w*', r'하락\w*', r'폭등\w*', r'폭락\w*',
-        r'ATH\w*', r'신고가\w*', r'바닥\w*', r'저점\w*', r'고점\w*',
-        r'강세\w*', r'약세\w*', r'불장\w*', r'곰장\w*', r'횡보\w*',
-        r'돌파\w*', r'지지\w*', r'저항\w*', r'반등\w*', r'반락\w*'
-    ]
-    
+    # Cryptocurrency-related keywords (English)
     found_keywords = []
-    for pattern in crypto_keywords:
-        matches = re.findall(pattern, all_text, re.IGNORECASE)
+    for pattern in CRYPTO_KEYWORDS:
+        matches = re.findall(pattern, text)
         found_keywords.extend(matches)
     
-    # Calculate keyword frequency
+    # Count keyword frequency
     keyword_counts = {}
     for keyword in found_keywords:
         keyword_counts[keyword] = keyword_counts.get(keyword, 0) + 1
     
     # Extract top keywords
-    top_keywords = sorted(keyword_counts.items(), key=lambda x: x[1], reverse=True)[:10]
-    
-    # Coin mention frequency
-    coin_mentions = df["coin"].value_counts().head(10).to_dict()
+    top_keywords = sorted(keyword_counts.items(), key=lambda x: x[1], reverse=True)[:KEYWORDS_TOP_COUNT]
     
     return {
         "keywords": [{"word": word, "count": count} for word, count in top_keywords],
-        "coin_mentions": coin_mentions,
-        "total_comments": len(df)
+        "total_keywords": len(found_keywords)
     }
 
+def analyze_coin_sentiment(comments: list) -> dict:
+    """Analyze sentiment for a specific coin"""
+    if not comments:
+        return {"sentiment_score": 0, "comment_count": 0}
+    
+    # Basic statistics
+    comment_count = len(comments)
+    
+    # Sentiment analysis (using sentimental column)
+    sentiment_scores = [comment.get("sentimental", 0) for comment in comments if comment.get("sentimental") is not None]
+    
+    # Recent comments
+    recent_comments = sorted(comments, key=lambda x: x.get("timestamp", ""), reverse=True)
+    
+    # Positive/negative keyword count (English)
+    all_text = " ".join([comment.get("content", "") for comment in comments])
+    positive_count = sum(all_text.lower().count(word) for word in POSITIVE_KEYWORDS)
+    negative_count = sum(all_text.lower().count(word) for word in NEGATIVE_KEYWORDS)
+    
+    # Calculate sentiment score (-1 to 1)
+    if sentiment_scores:
+        avg_sentiment = np.mean(sentiment_scores)
+    else:
+        # Fallback to keyword-based sentiment
+        total_keywords = positive_count + negative_count
+        if total_keywords > 0:
+            avg_sentiment = (positive_count - negative_count) / total_keywords
+        else:
+            avg_sentiment = 0
+    
+    return {
+        "sentiment_score": round(avg_sentiment, 3),
+        "comment_count": comment_count,
+        "positive_keywords": positive_count,
+        "negative_keywords": negative_count,
+        "recent_comments": recent_comments[-3:],  # Last 3 only
+        "sentiment_scores": sentiment_scores
+    }
 
-def analyze_coin_sentiment(df: pd.DataFrame, target_coins: List[str] = None) -> Dict:
-    """Analyze sentiment by coin"""
-    if df.empty:
-        return {"coin_sentiments": []}
+def find_hot_discussions(comments: list) -> dict:
+    """Find hot discussion topics"""
+    if not comments:
+        return {"hot_topics": [], "urgency_signals": []}
     
-    coins_to_analyze = target_coins if target_coins else df["coin"].unique()[:MAX_COINS_TO_ANALYZE]
+    # Active coins (by comment count)
+    coin_counts = Counter([comment.get("coin", "unknown") for comment in comments])
+    active_coins = coin_counts.most_common(5)
     
-    coin_sentiments = []
+    # Extract keywords from recent comments
+    recent_texts = [comment.get("content", "") for comment in comments[-10:]]
+    combined_text = " ".join(recent_texts).lower()
     
-    for coin in coins_to_analyze:
-        coin_data = df[df["coin"] == coin]
-        
-        if coin_data.empty:
-            continue
-        
-        # Basic statistics
-        total_comments = len(coin_data)
-        
-        # Sentiment analysis (using sentimental column)
-        sentiment_counts = coin_data["sentimental"].value_counts().to_dict()
-        
-        # Recent comments
-        recent_comments = coin_data.tail(5)["text"].tolist()
-        
-        # Positive/negative keyword count (Korean keywords)
-        positive_keywords = ['좋다', '상승', '급등', '강세', '불장', '호재', '대박']
-        negative_keywords = ['나쁘다', '하락', '급락', '약세', '곰장', '악재', '망했']
-        
-        all_text = " ".join(coin_data["text"].dropna().astype(str))
-        positive_count = sum(all_text.lower().count(word) for word in positive_keywords)
-        negative_count = sum(all_text.lower().count(word) for word in negative_keywords)
-        
-        # Calculate sentiment score (-1 ~ 1)
-        total_sentiment_words = positive_count + negative_count
-        sentiment_score = 0
-        if total_sentiment_words > 0:
-            sentiment_score = (positive_count - negative_count) / total_sentiment_words
-        
-        coin_sentiments.append({
-            "coin": coin,
-            "total_comments": total_comments,
-            "sentiment_score": round(sentiment_score, 2),
-            "positive_signals": positive_count,
-            "negative_signals": negative_count,
-            "recent_comments": recent_comments[-3:],  # Last 3 only
-            "sentiment_distribution": sentiment_counts
-        })
-    
-    # Sort by sentiment score
-    coin_sentiments.sort(key=lambda x: x["sentiment_score"], reverse=True)
-    
-    return {"coin_sentiments": coin_sentiments}
-
-
-def find_hot_discussions(df: pd.DataFrame) -> Dict:
-    """Find hot discussions"""
-    if df.empty:
-        return {"hot_topics": []}
-    
-    # Coins with high comment counts
-    active_coins = df["coin"].value_counts().head(5)
+    # Check urgency keywords (English)
+    urgency_count = sum(combined_text.count(keyword) for keyword in URGENCY_KEYWORDS)
     
     hot_topics = []
+    if urgency_count > 0:  # Only if urgency keywords are present
+        hot_topics.append({
+            "topic": "Market urgency detected",
+            "urgency_signals": urgency_count,
+            "sample_comments": recent_texts[-2:],  # Last 2 comments
+            "type": "urgency"
+        })
     
-    for coin, comment_count in active_coins.items():
-        coin_data = df[df["coin"] == coin]
-        
-        # Extract keywords from recent comments
-        recent_texts = coin_data.tail(10)["text"].tolist()
-        combined_text = " ".join([str(text) for text in recent_texts if text])
-        
-        # Check urgency keywords (Korean)
-        urgency_keywords = ['급등', '급락', '폭등', '폭락', '대박', '망했', '신고가', '바닥']
-        urgency_count = sum(combined_text.count(keyword) for keyword in urgency_keywords)
-        
-        if urgency_count > 0:  # Only if urgency keywords exist
-            hot_topics.append({
-                "coin": coin,
-                "comment_count": comment_count,
-                "urgency_signals": urgency_count,
-                "sample_comments": recent_texts[-2:],  # Last 2 comments
-                "activity_level": "high" if comment_count > 10 else "medium"
-            })
-    
-    # Sort by urgency signals
+    # Sort by urgency signal
     hot_topics.sort(key=lambda x: x["urgency_signals"], reverse=True)
     
-    return {"hot_topics": hot_topics}
+    return {
+        "hot_topics": hot_topics,
+        "active_coins": [{"coin": coin, "count": count} for coin, count in active_coins]
+    }
 
-
-def analyze_community_sentiment(target_coins: List[str] = None) -> Dict:
-    """Comprehensive community sentiment analysis"""
+def analyze_community_sentiment(target_coins: list = None) -> dict:
+    """Analyze community sentiment and mood"""
     try:
-        logger.info("💬 Starting community sentiment analysis...")
+        # Initialize Supabase client
+        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
         
-        # Collect community data
-        comm_df = get_community_data(target_coins=target_coins)
-        if comm_df.empty:
-            return {"error": "No community data available."}
+        # Get recent community data
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=3)
+        
+        # Query community data
+        response = supabase.table(SUPABASE_COMMUNITY_TABLE).select("*").gte(
+            "timestamp", start_date.isoformat()
+        ).lte("timestamp", end_date.isoformat()).execute()
+        
+        if not response.data:
+            return {"error": "No community data available"}
+        
+        # Convert to DataFrame
+        df = pd.DataFrame(response.data)
+        df['timestamp'] = pd.to_datetime(df['timestamp'])
+        
+        # Filter target coins if specified
+        if target_coins:
+            df = df[df['coin'].isin(target_coins)]
         
         # Extract trending topics
-        trending = extract_trending_topics(comm_df)
+        trending = extract_keywords(" ".join(df['content'].fillna("")))
         
         # Analyze sentiment by coin
-        sentiments = analyze_coin_sentiment(comm_df, target_coins)
+        coin_sentiments = []
+        for coin in df['coin'].unique():
+            coin_comments = df[df['coin'] == coin].to_dict('records')
+            sentiment = analyze_coin_sentiment(coin_comments)
+            sentiment['coin'] = coin
+            coin_sentiments.append(sentiment)
         
         # Find hot discussions
-        hot_discussions = find_hot_discussions(comm_df)
+        hot_discussions = find_hot_discussions(df.to_dict('records'))
         
-        logger.success(f"✅ Sentiment analysis completed: {len(sentiments['coin_sentiments'])} coins analyzed")
+        # Sort by sentiment score
+        coin_sentiments.sort(key=lambda x: x["sentiment_score"], reverse=True)
         
         return {
+            "sentiments": {
+                "coin_sentiments": coin_sentiments[:SENTIMENT_TOP_COUNT],
+                "total_coins": len(coin_sentiments)
+            },
             "trending": trending,
-            "sentiments": sentiments,
-            "hot_discussions": hot_discussions,
-            "analysis_period_days": RECENT_DAYS
+            "hot_discussions": hot_discussions
         }
         
     except Exception as e:
-        logger.error(f"❌ Sentiment analysis failed: {e}")
+        logger.error(f"Sentiment analysis failed: {e}")
         return {"error": str(e)}
 
-
-def format_sentiment_summary(analysis_result: Dict, target_coins: List[str] = None) -> str:
-    """Format sentiment analysis results to text"""
-    if "error" in analysis_result:
-        return f"Sentiment analysis error: {analysis_result['error']}"
+def format_sentiment_summary(result: dict) -> str:
+    """Format sentiment analysis results as summary"""
+    if "error" in result:
+        return f"Sentiment analysis failed: {result['error']}"
     
-    sentiments = analysis_result.get("sentiments", {}).get("coin_sentiments", [])
-    hot_topics = analysis_result.get("hot_discussions", {}).get("hot_topics", [])
-    trending = analysis_result.get("trending", {})
+    sentiments = result.get("sentiments", {})
+    coin_sentiments = sentiments.get("coin_sentiments", [])
+    trending = result.get("trending", {})
+    hot_discussions = result.get("hot_discussions", {})
     
     summary_parts = []
     
     # Top sentiment score coins
-    if sentiments:
-        top_positive = [s for s in sentiments if s["sentiment_score"] > 0][:3]
-        if top_positive:
-            pos_list = [f"{s['coin']} ({s['sentiment_score']:+.2f})" for s in top_positive]
-            summary_parts.append(f"😊 Positive: {', '.join(pos_list)}")
-        
-        top_negative = [s for s in sentiments if s["sentiment_score"] < 0][:3]
-        if top_negative:
-            neg_list = [f"{s['coin']} ({s['sentiment_score']:+.2f})" for s in top_negative]
-            summary_parts.append(f"😰 Negative: {', '.join(neg_list)}")
+    if coin_sentiments:
+        summary_parts.append("😊 Top sentiment coins:")
+        for coin in coin_sentiments[:3]:
+            summary_parts.append(f"  • {coin['coin']}: {coin['sentiment_score']:.3f}")
     
     # Hot discussion coins
+    hot_topics = hot_discussions.get("hot_topics", [])
     if hot_topics:
-        hot_list = [f"{topic['coin']} ({topic['comment_count']} comments)" for topic in hot_topics[:3]]
-        summary_parts.append(f"🔥 Hot discussions: {', '.join(hot_list)}")
+        summary_parts.append("🔥 Hot discussions:")
+        for topic in hot_topics[:2]:
+            summary_parts.append(f"  • {topic['topic']}")
     
     # Trending keywords
-    top_keywords = trending.get("keywords", [])[:3]
+    top_keywords = trending.get("keywords", [])[:HOT_TOPICS_TOP_COUNT]
     if top_keywords:
-        keyword_list = [f"{kw['word']} ({kw['count']} times)" for kw in top_keywords]
+        keyword_list = [f"{kw['word']} ({kw['count']}x)" for kw in top_keywords]
         summary_parts.append(f"📈 Keywords: {', '.join(keyword_list)}")
-    
-    if not summary_parts:
-        return f"💬 No significant community reactions in the last {analysis_result.get('analysis_period_days', RECENT_DAYS)} days"
     
     return "\n".join(summary_parts) 

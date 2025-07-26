@@ -1,279 +1,230 @@
-# analyzers/prediction_analyzer.py - Prediction accuracy analysis
-from datetime import datetime, timedelta
-from typing import Dict, List, Tuple, Optional
+# analyzers/prediction_analyzer.py - AI Prediction Performance Analysis
 import pandas as pd
+import numpy as np
+from datetime import datetime, timedelta
 from loguru import logger
-
 from supabase import create_client
 from config import (
     SUPABASE_URL, SUPABASE_KEY, SUPABASE_PREDICT_TABLE,
-    RECENT_DAYS, ACCURACY_THRESHOLD_3DAY, ACCURACY_THRESHOLD_1DAY
+    ACCURACY_THRESHOLD_3DAY, ACCURACY_THRESHOLD_1DAY, PREDICTION_CONFIDENCE_THRESHOLD
 )
 
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-
-
-def get_prediction_data(days: int = RECENT_DAYS) -> pd.DataFrame:
-    """Collect prediction data"""
-    since = datetime.utcnow() - timedelta(days=days)
-    
-    page_size = 1000
-    page = 0
-    all_records = []
-    
-    while True:
-        start = page * page_size
-        end = start + page_size - 1
-        
-        response = (
-            supabase.table(SUPABASE_PREDICT_TABLE)
-            .select("coin, timestamp, pricetrend, finalscore, actual_trend, is_correct, verified")
-            .gte("timestamp", since.isoformat())
-            .eq("verified", True)  # Verified data only
-            .order("timestamp", desc=False)
-            .range(start, end)
-            .execute()
-        )
-        
-        page_data = response.data
-        if not page_data:
-            break
-            
-        all_records.extend(page_data)
-        page += 1
-    
-    if not all_records:
-        logger.warning("No prediction data available.")
-        return pd.DataFrame()
-    
-    df = pd.DataFrame(all_records)
-    df["timestamp"] = pd.to_datetime(df["timestamp"])
-    df = df.sort_values(["coin", "timestamp"])
-    
-    return df
-
-
-def calculate_accuracy_rates(df: pd.DataFrame) -> Dict:
-    """Calculate accuracy rates"""
-    if df.empty:
-        return {"error": "No prediction data available."}
-    
-    # Overall accuracy
-    total_predictions = len(df)
-    correct_predictions = len(df[df["is_correct"] == True])
-    overall_accuracy = (correct_predictions / total_predictions * 100) if total_predictions > 0 else 0
-    
-    # Daily accuracy
-    df["date"] = df["timestamp"].dt.date
-    daily_accuracy = []
-    
-    for date, day_group in df.groupby("date"):
-        day_total = len(day_group)
-        day_correct = len(day_group[day_group["is_correct"] == True])
-        day_accuracy = (day_correct / day_total * 100) if day_total > 0 else 0
-        
-        daily_accuracy.append({
-            "date": date.isoformat(),
-            "total": day_total,
-            "correct": day_correct,
-            "accuracy": round(day_accuracy, 2)
-        })
-    
-    # Accuracy by coin
-    coin_accuracy = []
-    for coin, coin_group in df.groupby("coin"):
-        coin_total = len(coin_group)
-        coin_correct = len(coin_group[coin_group["is_correct"] == True])
-        coin_acc = (coin_correct / coin_total * 100) if coin_total > 0 else 0
-        
-        coin_accuracy.append({
-            "coin": coin,
-            "total": coin_total,
-            "correct": coin_correct,
-            "accuracy": round(coin_acc, 2)
-        })
-    
-    # Accuracy by trend prediction (up/down)
-    trend_accuracy = {}
-    for trend in ["up", "down"]:
-        trend_data = df[df["pricetrend"] == trend]
-        if not trend_data.empty:
-            trend_total = len(trend_data)
-            trend_correct = len(trend_data[trend_data["is_correct"] == True])
-            trend_acc = (trend_correct / trend_total * 100) if trend_total > 0 else 0
-            
-            trend_accuracy[trend] = {
-                "total": trend_total,
-                "correct": trend_correct,
-                "accuracy": round(trend_acc, 2)
-            }
-    
-    return {
-        "overall": {
-            "total": total_predictions,
-            "correct": correct_predictions,
-            "accuracy": round(overall_accuracy, 2)
-        },
-        "daily": daily_accuracy,
-        "by_coin": sorted(coin_accuracy, key=lambda x: x["accuracy"], reverse=True),
-        "by_trend": trend_accuracy
-    }
-
-
-def find_successful_predictions(df: pd.DataFrame, trend_data: Dict = None) -> Dict:
-    """Find successful predictions (matching with surge/crash)"""
-    if df.empty:
-        return {"successful_matches": []}
-    
-    # Filter only correct predictions
-    successful_df = df[df["is_correct"] == True].copy()
-    
-    matches = []
-    
-    # Match with surge/crash data if available
-    if trend_data and not successful_df.empty:
-        # Match surge predictions
-        for surge_coin in trend_data.get("surge", []):
-            coin_predictions = successful_df[
-                (successful_df["coin"] == surge_coin["coin"]) &
-                (successful_df["pricetrend"] == "up")
-            ]
-            
-            for _, pred in coin_predictions.iterrows():
-                matches.append({
-                    "type": "surge_prediction",
-                    "coin": pred["coin"],
-                    "predicted_trend": pred["pricetrend"],
-                    "actual_trend": pred["actual_trend"],
-                    "confidence": pred["finalscore"],
-                    "timestamp": pred["timestamp"].isoformat(),
-                    "trend_change": surge_coin["change_rate"]
-                })
-        
-        # Match crash predictions
-        for crash_coin in trend_data.get("crash", []):
-            coin_predictions = successful_df[
-                (successful_df["coin"] == crash_coin["coin"]) &
-                (successful_df["pricetrend"] == "down")
-            ]
-            
-            for _, pred in coin_predictions.iterrows():
-                matches.append({
-                    "type": "crash_prediction",
-                    "coin": pred["coin"],
-                    "predicted_trend": pred["pricetrend"],
-                    "actual_trend": pred["actual_trend"],
-                    "confidence": pred["finalscore"],
-                    "timestamp": pred["timestamp"].isoformat(),
-                    "trend_change": crash_coin["change_rate"]
-                })
-    
-    # High confidence successful predictions (based on finalscore)
-    high_confidence = successful_df[abs(successful_df["finalscore"]) >= 80].copy()
-    
-    high_conf_list = []
-    for _, pred in high_confidence.iterrows():
-        high_conf_list.append({
-            "coin": pred["coin"],
-            "predicted_trend": pred["pricetrend"],
-            "confidence": pred["finalscore"],
-            "timestamp": pred["timestamp"].isoformat()
-        })
-    
-    return {
-        "successful_matches": matches,
-        "high_confidence_hits": high_conf_list
-    }
-
-
-def check_promotion_criteria(accuracy_data: Dict) -> Dict:
-    """Check promotion criteria"""
-    overall_acc = accuracy_data.get("overall", {}).get("accuracy", 0)
-    daily_accs = accuracy_data.get("daily", [])
-    
-    # Check 3-day overall accuracy
-    meets_3day_criteria = overall_acc >= ACCURACY_THRESHOLD_3DAY
-    
-    # Check daily accuracy (all days must meet criteria)
-    daily_meets_criteria = []
-    for day_data in daily_accs:
-        meets_1day = day_data["accuracy"] >= ACCURACY_THRESHOLD_1DAY
-        daily_meets_criteria.append({
-            "date": day_data["date"],
-            "accuracy": day_data["accuracy"],
-            "meets_criteria": meets_1day
-        })
-    
-    all_days_meet_criteria = all(day["meets_criteria"] for day in daily_meets_criteria)
-    
-    return {
-        "can_promote_3day": meets_3day_criteria,
-        "can_promote_1day": all_days_meet_criteria,
-        "overall_accuracy": overall_acc,
-        "daily_breakdown": daily_meets_criteria,
-        "criteria": {
-            "3day_threshold": ACCURACY_THRESHOLD_3DAY,
-            "1day_threshold": ACCURACY_THRESHOLD_1DAY
-        }
-    }
-
-
-def analyze_prediction_performance() -> Dict:
-    """Comprehensive prediction performance analysis"""
+def analyze_prediction_accuracy(target_coins: list = None) -> dict:
+    """Analyze AI prediction accuracy and performance"""
     try:
-        logger.info("🎯 Starting prediction performance analysis...")
+        # Initialize Supabase client
+        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
         
-        # Collect prediction data
-        pred_df = get_prediction_data()
-        if pred_df.empty:
-            return {"error": "No prediction data available."}
+        # Get recent prediction data
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=7)
         
-        # Calculate accuracy rates
-        accuracy_data = calculate_accuracy_rates(pred_df)
+        # Query prediction data
+        response = supabase.table(SUPABASE_PREDICT_TABLE).select("*").gte(
+            "timestamp", start_date.isoformat()
+        ).lte("timestamp", end_date.isoformat()).execute()
         
-        # Check promotion criteria
-        promotion_check = check_promotion_criteria(accuracy_data)
+        if not response.data:
+            return {"error": "No prediction data available"}
         
-        # Find successful predictions
-        successful_preds = find_successful_predictions(pred_df)
+        # Convert to DataFrame
+        df = pd.DataFrame(response.data)
+        df['timestamp'] = pd.to_datetime(df['timestamp'])
         
-        logger.success(f"✅ Prediction analysis completed: overall accuracy {accuracy_data['overall']['accuracy']}%")
+        # Filter target coins if specified
+        if target_coins:
+            df = df[df['coin'].isin(target_coins)]
+        
+        if df.empty:
+            return {"error": "No prediction data for specified coins"}
+        
+        # Overall accuracy
+        total_predictions = len(df)
+        correct_predictions = len(df[df['is_correct'] == True])
+        overall_accuracy = (correct_predictions / total_predictions * 100) if total_predictions > 0 else 0
+        
+        # Daily accuracy
+        df['date'] = df['timestamp'].dt.date
+        daily_accuracy = df.groupby('date').apply(
+            lambda x: (x['is_correct'].sum() / len(x) * 100) if len(x) > 0 else 0
+        ).to_dict()
+        
+        # Coin-specific accuracy
+        coin_accuracy = {}
+        for coin in df['coin'].unique():
+            coin_data = df[df['coin'] == coin]
+            if len(coin_data) > 0:
+                correct = len(coin_data[coin_data['is_correct'] == True])
+                accuracy = (correct / len(coin_data) * 100)
+                coin_accuracy[coin] = {
+                    "accuracy": round(accuracy, 2),
+                    "total_predictions": len(coin_data),
+                    "correct_predictions": correct
+                }
+        
+        # Direction-specific accuracy (up/down predictions)
+        up_predictions = df[df['predicted_direction'] == 'up']
+        down_predictions = df[df['predicted_direction'] == 'down']
+        
+        up_accuracy = (len(up_predictions[up_predictions['is_correct'] == True]) / len(up_predictions) * 100) if len(up_predictions) > 0 else 0
+        down_accuracy = (len(down_predictions[down_predictions['is_correct'] == True]) / len(down_predictions) * 100) if len(down_predictions) > 0 else 0
         
         return {
-            "accuracy": accuracy_data,
-            "promotion": promotion_check,
-            "successful_predictions": successful_preds,
-            "total_predictions": len(pred_df)
+            "overall_accuracy": round(overall_accuracy, 2),
+            "total_predictions": total_predictions,
+            "correct_predictions": correct_predictions,
+            "daily_accuracy": daily_accuracy,
+            "coin_accuracy": coin_accuracy,
+            "direction_accuracy": {
+                "up_accuracy": round(up_accuracy, 2),
+                "down_accuracy": round(down_accuracy, 2),
+                "up_predictions": len(up_predictions),
+                "down_predictions": len(down_predictions)
+            }
         }
         
     except Exception as e:
-        logger.error(f"❌ Prediction analysis failed: {e}")
+        logger.error(f"Prediction analysis failed: {e}")
         return {"error": str(e)}
 
+def find_successful_predictions(target_coins: list = None) -> dict:
+    """Find successful predictions with high confidence"""
+    try:
+        # Initialize Supabase client
+        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+        
+        # Get recent data
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=3)
+        
+        # Query successful predictions
+        response = supabase.table(SUPABASE_PREDICT_TABLE).select("*").gte(
+            "timestamp", start_date.isoformat()
+        ).lte("timestamp", end_date.isoformat()).eq("is_correct", True).gte(
+            "confidence", PREDICTION_CONFIDENCE_THRESHOLD
+        ).execute()
+        
+        if not response.data:
+            return {"error": "No successful predictions found"}
+        
+        # Convert to DataFrame
+        df = pd.DataFrame(response.data)
+        df['timestamp'] = pd.to_datetime(df['timestamp'])
+        
+        # Filter target coins if specified
+        if target_coins:
+            df = df[df['coin'].isin(target_coins)]
+        
+        # Match with surge/crash data if available
+        successful_predictions = []
+        for _, row in df.iterrows():
+            prediction = {
+                "coin": row['coin'],
+                "predicted_direction": row['predicted_direction'],
+                "confidence": row['confidence'],
+                "timestamp": row['timestamp'].isoformat(),
+                "actual_change": row.get('actual_change', 0)
+            }
+            successful_predictions.append(prediction)
+        
+        # Sort by confidence
+        successful_predictions.sort(key=lambda x: x['confidence'], reverse=True)
+        
+        return {
+            "successful_predictions": successful_predictions,
+            "total_successful": len(successful_predictions),
+            "average_confidence": np.mean([p['confidence'] for p in successful_predictions]) if successful_predictions else 0
+        }
+        
+    except Exception as e:
+        logger.error(f"Successful predictions analysis failed: {e}")
+        return {"error": str(e)}
 
-def format_prediction_summary(analysis_result: Dict) -> str:
-    """Format prediction analysis results to text"""
-    if "error" in analysis_result:
-        return f"Prediction analysis error: {analysis_result['error']}"
+def check_promotion_criteria(accuracy_data: dict) -> dict:
+    """Check if prediction accuracy meets promotion criteria"""
+    try:
+        overall_accuracy = accuracy_data.get("overall_accuracy", 0)
+        direction_accuracy = accuracy_data.get("direction_accuracy", {})
+        
+        # 3-day overall criteria
+        meets_3day_criteria = overall_accuracy >= ACCURACY_THRESHOLD_3DAY
+        
+        # 1-day direction criteria
+        up_accuracy = direction_accuracy.get("up_accuracy", 0)
+        down_accuracy = direction_accuracy.get("down_accuracy", 0)
+        meets_1day_criteria = (up_accuracy >= ACCURACY_THRESHOLD_1DAY or 
+                              down_accuracy >= ACCURACY_THRESHOLD_1DAY)
+        
+        return {
+            "meets_3day_criteria": meets_3day_criteria,
+            "meets_1day_criteria": meets_1day_criteria,
+            "overall_accuracy": overall_accuracy,
+            "up_accuracy": up_accuracy,
+            "down_accuracy": down_accuracy,
+            "promotion_eligible": meets_3day_criteria or meets_1day_criteria
+        }
+        
+    except Exception as e:
+        logger.error(f"Promotion criteria check failed: {e}")
+        return {"error": str(e)}
+
+def get_prediction_analysis(target_coins: list = None) -> dict:
+    """Get comprehensive prediction analysis"""
+    try:
+        # Analyze prediction accuracy
+        accuracy_result = analyze_prediction_accuracy(target_coins)
+        
+        if "error" in accuracy_result:
+            return accuracy_result
+        
+        # Find successful predictions
+        success_result = find_successful_predictions(target_coins)
+        
+        # Check promotion criteria
+        promotion_result = check_promotion_criteria(accuracy_result)
+        
+        return {
+            "accuracy_analysis": accuracy_result,
+            "successful_predictions": success_result,
+            "promotion_criteria": promotion_result
+        }
+        
+    except Exception as e:
+        logger.error(f"Prediction analysis failed: {e}")
+        return {"error": str(e)}
+
+def format_prediction_summary(result: dict) -> str:
+    """Format prediction analysis results as summary"""
+    if "error" in result:
+        return f"Prediction analysis failed: {result['error']}"
     
-    accuracy = analysis_result.get("accuracy", {})
-    promotion = analysis_result.get("promotion", {})
+    accuracy_analysis = result.get("accuracy_analysis", {})
+    promotion_criteria = result.get("promotion_criteria", {})
+    successful_predictions = result.get("successful_predictions", {})
     
-    overall_acc = accuracy.get("overall", {}).get("accuracy", 0)
+    summary_parts = []
     
-    summary_parts = [f"🎯 Prediction accuracy: {overall_acc}%"]
+    # Overall accuracy
+    overall_accuracy = accuracy_analysis.get("overall_accuracy", 0)
+    summary_parts.append(f"📊 Overall accuracy: {overall_accuracy:.1f}%")
+    
+    # Direction accuracy
+    direction_accuracy = accuracy_analysis.get("direction_accuracy", {})
+    up_accuracy = direction_accuracy.get("up_accuracy", 0)
+    down_accuracy = direction_accuracy.get("down_accuracy", 0)
+    summary_parts.append(f"📈 Up predictions: {up_accuracy:.1f}%")
+    summary_parts.append(f"📉 Down predictions: {down_accuracy:.1f}%")
     
     # Promotion eligibility
-    if promotion.get("can_promote_3day"):
-        summary_parts.append(f"✅ 3-day overall accuracy criteria met ({ACCURACY_THRESHOLD_3DAY}%+ achieved)")
+    if promotion_criteria.get("promotion_eligible", False):
+        summary_parts.append("✅ Meets promotion criteria")
+    else:
+        summary_parts.append("❌ Does not meet promotion criteria")
     
-    if promotion.get("can_promote_1day"):
-        summary_parts.append(f"✅ All daily accuracy criteria met ({ACCURACY_THRESHOLD_1DAY}%+ each day)")
-    
-    # Top performing coins
-    top_coins = accuracy.get("by_coin", [])[:3]
-    if top_coins:
-        coin_list = [f"{coin['coin']} {coin['accuracy']}%" for coin in top_coins]
-        summary_parts.append(f"🏆 Top performers: {', '.join(coin_list)}")
+    # Successful predictions
+    total_successful = successful_predictions.get("total_successful", 0)
+    if total_successful > 0:
+        avg_confidence = successful_predictions.get("average_confidence", 0)
+        summary_parts.append(f"🎯 Successful predictions: {total_successful} (avg confidence: {avg_confidence:.1f}%)")
     
     return "\n".join(summary_parts) 
