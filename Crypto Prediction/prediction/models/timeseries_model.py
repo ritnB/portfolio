@@ -3,129 +3,133 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from transformers import PreTrainedModel, PretrainedConfig
-import numpy as np
 
+class PatchTST(nn.Module):
+    def __init__(self, input_size, d_model, num_layers, num_heads,
+                 patch_size, window_size, num_classes,
+                 dropout=0.0, pooling_type='cls', mlp_hidden_mult=2,
+                 activation='relu', stride=None,
+                 loss_type='ce', focal_gamma=2.0):
 
-class ModelConfig(PretrainedConfig):
-    """
-    Configuration class for the time series prediction model.
-    Note: Specific architecture details are proprietary.
-    """
-    model_type = "timeseries_transformer"
+        super().__init__()
 
-    def __init__(
-        self,
-        n_features=8,  # Number of input features
-        n_classes=2,   # Number of output classes
-        window_size=14,  # Default window size
-        **kwargs
-    ):
-        self.n_features = n_features
-        self.n_classes = n_classes
-        self.window_size = window_size
-        super().__init__(**kwargs)
+        self.loss_type = loss_type
+        self.focal_gamma = focal_gamma
+        self.focal_loss = None 
+        self.patch_size = patch_size
+        self.stride = stride if stride is not None else patch_size
+        self.pooling_type = pooling_type.lower()
 
+        assert window_size >= patch_size, "window_size must be >= patch_size"
+        assert (window_size - patch_size) % self.stride == 0, "patches must align evenly"
 
-class TimeSeriesTransformer(PreTrainedModel):
-    """
-    Time Series Transformer model for cryptocurrency prediction.
-    
-    Note: This is a simplified version for portfolio demonstration.
-    The actual production model contains proprietary architecture details.
-    """
-    config_class = ModelConfig
+        self.num_patches = 1 + (window_size - patch_size) // self.stride
+        self.input_proj = nn.Linear(input_size * patch_size, d_model)
 
-    def __init__(self, config):
-        super().__init__(config)
-        self.config = config
-        
-        # Simplified architecture (actual implementation is proprietary)
-        self.feature_projection = nn.Linear(config.n_features, 128)
-        self.transformer_layers = nn.TransformerEncoder(
-            nn.TransformerEncoderLayer(
-                d_model=128,
-                nhead=8,
-                dim_feedforward=256,
-                dropout=0.1,
-                batch_first=True
-            ),
-            num_layers=4
+        if self.pooling_type == 'cls':
+            self.cls_token = nn.Parameter(torch.zeros(1, 1, d_model))
+
+        self.pos_embedding = nn.Parameter(torch.randn(
+            1, self.num_patches + (1 if self.pooling_type == 'cls' else 0), d_model))
+
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model, nhead=num_heads,
+            dropout=dropout, batch_first=True
         )
-        self.classifier = nn.Linear(128, config.n_classes)
-        self.dropout = nn.Dropout(0.1)
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
 
-    def forward(self, x):
-        """
-        Forward pass through the model.
-        
-        Args:
-            x: Input tensor of shape (batch_size, sequence_length, n_features)
-        
-        Returns:
-            Dictionary containing logits and other outputs
-        """
-        # Project features
-        x = self.feature_projection(x)
-        
-        # Apply transformer layers
-        x = self.transformer_layers(x)
-        
-        # Global average pooling
-        x = torch.mean(x, dim=1)
-        
-        # Apply dropout and classification layer
-        x = self.dropout(x)
-        logits = self.classifier(x)
-        
+        self.act = {
+            'relu': nn.ReLU(),
+            'gelu': nn.GELU(),
+            'silu': nn.SiLU()
+        }[activation]
+
+        hidden_dim = d_model * mlp_hidden_mult
+        self.mlp = nn.Sequential(
+            nn.Linear(d_model, hidden_dim),
+            self.act,
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, num_classes)
+        )
+
+        self.ce_loss = nn.CrossEntropyLoss()
+        self.focal_loss = None
+    def forward(self, x, labels=None):
+        B, W, D = x.shape
+        P = self.patch_size
+        S = self.stride
+    
+        # ① Create sliding patches: (B, num_patches, patch_size * D)
+        x = x.unfold(dimension=1, size=P, step=S)
+        x = x.contiguous().view(B, -1, P * D)
+    
+        # ② Linear projection
+        x = self.input_proj(x)
+    
+        # ③ Insert CLS token (optional)
+        if self.pooling_type == 'cls':
+            cls_token = self.cls_token.expand(B, -1, -1)
+            x = torch.cat([cls_token, x], dim=1)
+    
+        # ④ Add position embedding
+        x = x + self.pos_embedding[:, :x.size(1), :]
+    
+        # ⑤ Pass through Transformer encoder
+        x = self.transformer(x)
+    
+        # ⑥ Pooling
+        if self.pooling_type == 'cls':
+            x = x[:, 0, :]
+        else:
+            x = x.mean(dim=1)
+    
+        # ⑦ Classification
+        logits = self.mlp(x)
+    
+        # ⑧ Loss (optional)
+        if labels is not None:
+            if self.loss_type == 'focal':
+                if self.focal_loss is None:
+                    self.focal_loss = FocalLoss(gamma=self.focal_gamma)
+                loss = self.focal_loss(logits, labels)
+            else:
+                loss = self.ce_loss(logits, labels)
+            return {"loss": loss, "logits": logits}
+    
         return {"logits": logits}
 
-
-# Alias for backward compatibility
-PatchTST = TimeSeriesTransformer
-
-
-def load_model_from_checkpoint(path: str) -> TimeSeriesTransformer:
+def load_model_from_checkpoint(path: str) -> PatchTST:
     """
-    Load TimeSeriesTransformer model from saved checkpoint.
+    저장된 모델 체크포인트에서 PatchTST 모델을 로드합니다.
 
     Args:
-        path (str): Path to .pt file
+        path (str): .pt 파일 경로
 
     Returns:
-        TimeSeriesTransformer model instance
+        PatchTST 모델 인스턴스
     """
     checkpoint = torch.load(path, map_location=torch.device("cpu"))
     model_args = checkpoint["model_args"]
-    
-    # Create config from model args
-    config = ModelConfig(**model_args)
-    model = TimeSeriesTransformer(config)
+    model = PatchTST(**model_args)
     model.load_state_dict(checkpoint["state_dict"])
     return model
 
-def load_model(**model_args) -> TimeSeriesTransformer:
-    config = ModelConfig(**model_args)
-    return TimeSeriesTransformer(config)
+def load_model(**model_args) -> PatchTST:
+    return PatchTST(**model_args)
 
 class FocalLoss(torch.nn.Module):
-    """
-    Focal Loss implementation for handling class imbalance.
-    """
-    def __init__(self, alpha=1, gamma=2, reduction='mean'):
-        super(FocalLoss, self).__init__()
-        self.alpha = alpha
+    def __init__(self, gamma=2.0, reduction='mean'):
+        super().__init__()
         self.gamma = gamma
         self.reduction = reduction
 
-    def forward(self, inputs, targets):
-        ce_loss = F.cross_entropy(inputs, targets, reduction='none')
+    def forward(self, input, target):
+        ce_loss = F.cross_entropy(input, target, reduction='none')
         pt = torch.exp(-ce_loss)
-        focal_loss = self.alpha * (1-pt)**self.gamma * ce_loss
-
+        focal_loss = (1 - pt) ** self.gamma * ce_loss
+        
         if self.reduction == 'mean':
             return focal_loss.mean()
         elif self.reduction == 'sum':
             return focal_loss.sum()
-        else:
-            return focal_loss
+        return focal_loss

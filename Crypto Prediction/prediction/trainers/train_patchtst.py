@@ -1,4 +1,4 @@
-# ✅ train_patchtst.py (v10_2 호환 수정)
+# train_patchtst.py (v10_2 compatible modifications)
 
 import os
 import numpy as np
@@ -11,135 +11,147 @@ from torch.utils.data import Subset, DataLoader
 from sklearn.metrics import f1_score, precision_score, recall_score, classification_report
 from sklearn.preprocessing import StandardScaler
 from transformers import Trainer, TrainingArguments
+from optuna.trial import TrialState
 
-from models.timeseries_model import TimeSeriesTransformer, ModelConfig
-from data.preprocess import CoinTimeSeriesDataset
+from models.timeseries_model import PatchTST, FocalLoss
+from data.preprocess import AssetTimeSeriesDataset
 from data.supabase_io import load_technical_indicators
-from utils.training_utils import objective, CombinedEarlyStoppingCallback, setup_training_environment
-
-# Configuration constants (actual values are proprietary)
-TEST_DAYS = 30
-VALIDATION_DAYS = 30
+from utils.training_utils import objective, CombinedEarlyStoppingCallback
+# Configuration from config
+from config import TEST_DAYS, VALIDATION_DAYS
 
 def train_patchtst_model():
-    """
-    Train the time series prediction model.
-    
-    Note: This is a simplified version for portfolio demonstration.
-    Actual training pipeline contains proprietary optimizations and strategies.
-    """
     from optuna import create_study
     from optuna.pruners import MedianPruner
-    
-    setup_training_environment()
 
-    # Data loading and preprocessing
-    df = load_technical_indicators()  # Coin mapping automatically applied
+    # ==== Data loading and preprocessing (v10_1 style) ====
+    df = load_technical_indicators()  # Asset mapping applied automatically
     df = df[df['price_trend'].isin(['up', 'down'])].copy()
     df['label'] = df['price_trend'].map({'down': 0, 'up': 1})
 
-    # Use abstracted feature columns
-    from config import FEATURE_COLS
-    feature_cols = FEATURE_COLS
+    feature_cols = [
+        'sma', 'ema', 'macd', 'macd_signal', 'macd_diff',
+        'rsi', 'stochastic', 'cci'
+    ]
 
-    # 3-stage time-based data splitting
+    # ==== 3-stage time-based data splitting (v10_2 method) ====
     max_ts = df['timestamp'].max()
-    test_cutoff = max_ts - timedelta(days=TEST_DAYS)
-    val_cutoff = max_ts - timedelta(days=TEST_DAYS + VALIDATION_DAYS)
+    test_cutoff = max_ts - timedelta(days=TEST_DAYS)                    # Recent days (test)
+    val_cutoff = max_ts - timedelta(days=TEST_DAYS + VALIDATION_DAYS)   # Previous days (validation)
 
-    train_df = df[df['timestamp'] < val_cutoff].copy()
-    val_df = df[(df['timestamp'] >= val_cutoff) & (df['timestamp'] < test_cutoff)].copy()
-    test_df = df[df['timestamp'] >= test_cutoff].copy()
+    train_df = df[df['timestamp'] < val_cutoff].copy()                                          # Remaining (training)
+    val_df = df[(df['timestamp'] >= val_cutoff) & (df['timestamp'] < test_cutoff)].copy()      # Validation
+    test_df = df[df['timestamp'] >= test_cutoff].copy()                                         # Test
 
-    # Feature scaling
-    scaler = StandardScaler()
-    scaled_train = scaler.fit_transform(train_df[feature_cols])
-    scaled_val = scaler.transform(val_df[feature_cols])
-    scaled_test = scaler.transform(test_df[feature_cols])
-
-    train_df = train_df.copy()
-    val_df = val_df.copy() 
-    test_df = test_df.copy()
-    train_df[feature_cols] = scaled_train
-    val_df[feature_cols] = scaled_val
-    test_df[feature_cols] = scaled_test
-
+    # ==== Scaling performed independently in CV and final training ====
+    # Keep in raw data state (no scaling)
     train_df = train_df.dropna()
     val_df = val_df.dropna()
     test_df = test_df.dropna()
+    
+    print("⚠️ Scaling performed independently in each CV fold and final training.")
 
     today_str = datetime.utcnow().strftime("%Y%m%d")
     save_dir = f"/tmp/model_{today_str}"
     os.makedirs(save_dir, exist_ok=True)
 
-    scaler_path = os.path.join(save_dir, f"scaler_{today_str}.pkl")
-    joblib.dump(scaler, scaler_path)
-
-    # Simplified hyperparameter tuning (actual search space is proprietary)
+    # ==== Optuna tuning (v11_2 Holdout validation) ====
     study = create_study(
         direction="maximize", 
-        pruner=MedianPruner(n_startup_trials=3, n_warmup_steps=0),
-        study_name="timeseries_model_tuning"
+        pruner=MedianPruner(n_startup_trials=5, n_warmup_steps=0),
+        study_name="patchtst_holdout_validation"
     )
-    
-    # Reduced trials for demo (actual optimization uses more trials)
-    study.optimize(lambda trial: objective(trial, train_df, val_df, feature_cols), n_trials=5)
+    study.optimize(lambda trial: objective(trial, train_df, val_df, feature_cols), n_trials=20)
 
     best_trial = study.best_trial
     params = best_trial.params
 
     print(f"\n🎯 Best Trial Results:")
     print(f" - Best F1 Score: {best_trial.value:.4f}")
-    print(f" - Best Window Size: {params['window_size']}")
+    print(f" - Best Params:")
+    for k, v in best_trial.params.items():
+        print(f"    {k}: {v}")
 
-    # Final model training with simplified configuration
+    # ==== Final model training (v11_2 method) ====
     window_size = params['window_size']
     
     # Combine Train + Validation data for final model retraining
     combined_train_df = pd.concat([train_df, val_df], ignore_index=True)
-    train_dataset = CoinTimeSeriesDataset(combined_train_df, window_size, feature_cols)
+    
+    # Final model scaling
+    final_scaler = StandardScaler()
+    scaled_combined = final_scaler.fit_transform(combined_train_df[feature_cols])
+    scaled_combined_df = combined_train_df.copy()
+    scaled_combined_df[feature_cols] = scaled_combined
+    
+    train_dataset = AssetTimeSeriesDataset(scaled_combined_df, window_size, feature_cols)
+    
+    # Save scaler
+    scaler_path = os.path.join(save_dir, f"scaler_standard_{today_str}.pkl")
+    joblib.dump(final_scaler, scaler_path)
+    print(f"✅ StandardScaler saved: {scaler_path}")
 
-    # Split for retraining
+    # Retraining train/val split (use part of combined data for validation)
     val_ratio = 0.1
     split_idx = int(len(train_dataset) * (1 - val_ratio))
     tr_ds = Subset(train_dataset, list(range(0, split_idx)))
     vl_ds = Subset(train_dataset, list(range(split_idx, len(train_dataset))))
 
-    # Create final model
-    config = ModelConfig(
-        n_features=len(feature_cols),
-        n_classes=2,
-        window_size=window_size
+    final_model = PatchTST(
+        input_size=len(feature_cols),
+        d_model=params['d_model'],
+        num_layers=2,
+        num_heads=4,
+        patch_size=params['patch_len'],
+        window_size=window_size,
+        stride=params['stride'],
+        num_classes=2,
+        dropout=params['dropout_mlp'],
+        pooling_type=params['pooling_type'],
+        mlp_hidden_mult=params['mlp_hidden_mult'],
+        activation=params['activation']
     )
-    final_model = TimeSeriesTransformer(config)
+    if params['loss_type'] == 'focal':
+        final_model.focal_loss = FocalLoss(gamma=params.get('focal_gamma', 2.0))
 
-    # Training configuration (simplified)
-    final_training_args = TrainingArguments(
-        output_dir=save_dir,
-        num_train_epochs=10,
-        per_device_train_batch_size=params.get('batch_size', 32),
-        learning_rate=params.get('learning_rate', 1e-4),
-        evaluation_strategy="epoch",
+    final_args = TrainingArguments(
+        output_dir=f"{save_dir}/best_patchtst_model",
+        per_device_train_batch_size=32,
+        per_device_eval_batch_size=32,
+        eval_strategy="epoch",
         save_strategy="epoch",
-        load_best_model_at_end=True,
+        num_train_epochs=1000,
+        learning_rate=params['learning_rate'],
+        weight_decay=params['weight_decay'],
         logging_steps=50,
-        no_cuda=False if torch.cuda.is_available() else True,
+        report_to=[],
+        load_best_model_at_end=True,
+        metric_for_best_model="eval_weighted_f1"
     )
 
     final_trainer = Trainer(
         model=final_model,
-        args=final_training_args,
+        args=final_args,
         train_dataset=tr_ds,
         eval_dataset=vl_ds,
-        callbacks=[CombinedEarlyStoppingCallback(patience=5)]
+        compute_metrics=lambda p: {
+            "eval_weighted_f1": f1_score(p.label_ids, np.argmax(p.predictions, axis=1), average="weighted")
+        },
+        callbacks=[CombinedEarlyStoppingCallback(patience=10, max_loss_diff=0.05)]
     )
 
     # Start retraining
     final_trainer.train()
 
-    # Test dataset evaluation
+    # ==== Test dataset evaluation (v11_2 method) ====
     final_model.eval()
-    test_dataset = CoinTimeSeriesDataset(test_df, window_size, feature_cols)
+    
+    # Test dataset composition (using final_scaler)
+    scaled_test = final_scaler.transform(test_df[feature_cols])
+    scaled_test_df = test_df.copy()
+    scaled_test_df[feature_cols] = scaled_test
+    
+    test_dataset = AssetTimeSeriesDataset(scaled_test_df, window_size, feature_cols)
     test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
 
     all_preds, all_labels = [], []
@@ -167,29 +179,51 @@ def train_patchtst_model():
     recall = recall_score(all_labels, all_preds, average="weighted")
     print(f"✅ Weighted F1 Score: {f1:.4f}")
     print(f"✅ Precision: {precision:.4f}")
-    print(f"✅ Recall: {recall:.4f}")
+    print(f"✅ Recall:    {recall:.4f}")
 
-    # Model saving with simplified parameters
-    model_path = os.path.join(save_dir, f"model_{today_str}.pt")
+    # ==== Model saving (v11_2 method) ====
+    model_path = os.path.join(save_dir, f"patchtst_final_model_{today_str}.pt")
+    
+    # Model args configuration (same as v11_2)
+    model_args = {
+        'input_size': len(feature_cols),
+        'd_model': params['d_model'],
+        'num_layers': 2,
+        'num_heads': 4,
+        'patch_size': params['patch_len'],
+        'window_size': window_size,
+        'stride': params['stride'],
+        'num_classes': 2,
+        'dropout': params['dropout_mlp'],
+        'pooling_type': params['pooling_type'],
+        'mlp_hidden_mult': params['mlp_hidden_mult'],
+        'activation': params['activation'],
+        'loss_type': params.get('loss_type', 'ce'),
+        'focal_gamma': params.get('focal_gamma', None) if params.get('loss_type') == 'focal' else None
+    }
+    
     torch.save({
-        "state_dict": final_model.state_dict(),
-        "model_args": {
-            "n_features": len(feature_cols),
-            "n_classes": 2,
-            "window_size": window_size,
-        }
+        'model_class': 'PatchTST',
+        'model_args': model_args,
+        'state_dict': final_model.state_dict()
     }, model_path)
 
+    # Log saving
     log_path = os.path.join(save_dir, f"training_log_{today_str}.txt")
     with open(log_path, "w") as f:
         f.write("\n".join([
+            f"🎯 Best Trial Results:",
+            f"Best F1 Score: {best_trial.value:.4f}",
+            f"Best Params:",
+            *[f"  {k}: {v}" for k, v in best_trial.params.items()],
+            f"",
             f"📊 Test Set Results:",
             f"Weighted F1 Score: {f1:.4f}",
             f"Precision: {precision:.4f}",
             f"Recall: {recall:.4f}"
         ]))
 
-    print(f"\n✅ Final model saved successfully (for service): {model_path}")
+    print(f"\n✅ Final model saved (for service): {model_path}")
 
     return {
         "model_path": model_path,

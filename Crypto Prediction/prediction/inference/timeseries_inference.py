@@ -6,9 +6,9 @@ import pandas as pd
 from datetime import datetime
 import joblib
 
-from config import MODEL_PATH, SCALER_PATH, normalize_coin_name, FEATURE_COLS
+from config import MODEL_PATH, SCALER_PATH, normalize_asset_name, FEATURE_COLS
 from models.timeseries_model import load_model_from_checkpoint
-from data.preprocess import create_sliding_windows
+from data.preprocess import generate_sliding_windows, aggregate_asset_scores
 from data.supabase_io import save_prediction, load_recent_predictions
 
 # Device setting
@@ -18,25 +18,20 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 def load_scaler():
     return joblib.load(SCALER_PATH)
 
-# Model loading and preparation
+# Load and prepare trained model
 def load_trained_model():
     model = load_model_from_checkpoint(MODEL_PATH)
     model.to(device)
     model.eval()
     
-    # Extract model args (for necessary info like window_size)
+    # Extract model args (for window_size, etc.)
     checkpoint = torch.load(MODEL_PATH, map_location=device)
     model_args = checkpoint["model_args"]
     
     return model, model_args
 
-# Inference for single window
-def run_inference(model, input_features, coin=None):
-    """
-    Run inference on a single window of features.
-    
-    Note: Actual prediction logic contains proprietary algorithms.
-    """
+# Inference for a single window
+def run_timeseries_inference(model, input_features, asset=None):
     input_tensor = torch.tensor(input_features, dtype=torch.float32).unsqueeze(0).to(device)
 
     with torch.no_grad():
@@ -44,26 +39,19 @@ def run_inference(model, input_features, coin=None):
         logits = output["logits"]
         probs = torch.softmax(logits, dim=1).squeeze().cpu().numpy()
 
-    # Simplified scoring (actual scoring logic is proprietary)
-    confidence_score = float((probs[1] - probs[0]) * 100)
+    finalscore = float((probs[1] - probs[0]) * 100)
     prediction = {
-        "coin": coin,
+        "asset": asset,
         "probabilities": probs.tolist(),
-        "confidence_score": confidence_score,
-        "predicted_trend": int(np.argmax(probs) + 1)
+        "finalscore": finalscore,
+        "pricetrend": int(np.argmax(probs) + 1)
     }
     return prediction
 
-# Execute prediction pipeline
-def run_prediction_pipeline(merged_df, feature_cols=None, use_latest_only=True):
-    """
-    Execute the complete prediction pipeline.
-    
-    Note: This is a simplified version for portfolio demonstration.
-    Actual pipeline contains proprietary optimization and filtering logic.
-    """
+# Run the full pipeline
+def run_timeseries_pipeline(merged_df, feature_cols=None, use_latest_only=True):
     if feature_cols is None:
-        # Use same feature columns as training code
+        # Use the same feature columns as training code
         feature_cols = FEATURE_COLS
 
     model, model_args = load_trained_model()
@@ -71,78 +59,54 @@ def run_prediction_pipeline(merged_df, feature_cols=None, use_latest_only=True):
     window_size = model_args["window_size"]
     cached_predictions = load_recent_predictions()
 
-    coins = merged_df["coin"].unique()
-    for original_coin in coins:
-        # Normalize coin name
-        normalized_coin = normalize_coin_name(original_coin)
-        coin_df = merged_df[merged_df["coin"] == original_coin].copy()
-        print(f"\n[🔍 Processing] {original_coin} -> {normalized_coin} - {len(coin_df)} rows")
+    assets = merged_df["asset"].unique()
+    for original_asset in assets:
+        # Normalize asset name
+        normalized_asset = normalize_asset_name(original_asset)
+        asset_df = merged_df[merged_df["asset"] == original_asset].copy()
+        print(f"\n[🔍 Asset] {original_asset} -> {normalized_asset} - {len(asset_df)} rows")
 
-        if len(coin_df) < window_size:
+        if len(asset_df) < window_size:
             continue
 
         try:
-            # Apply feature scaling
-            coin_df[feature_cols] = scaler.transform(coin_df[feature_cols])
+            asset_df[feature_cols] = scaler.transform(asset_df[feature_cols])
         except Exception as e:
-            print(f"[❌ Scaling Error] {original_coin}: {e}")
+            print(f"[❌ Scaling Error] {original_asset}: {e}")
             continue
 
-        # Generate prediction windows (proprietary logic abstracted)
-        windows = create_sliding_windows(coin_df, window_size, feature_cols)
+        windows = generate_sliding_windows(asset_df, window_size, feature_cols)
         if not windows:
             continue
 
-        predictions = []
-        for window in windows:
-            pred = run_inference(model, window, normalized_coin)
-            predictions.append(pred)
-
-        if not predictions:
-            continue
-
-        # Aggregate predictions (proprietary aggregation logic abstracted)
-        final_prediction = aggregate_predictions(predictions, normalized_coin)
-        
-        # Save prediction with timestamp
-        prediction_data = {
-            "coin": normalized_coin,
-            "confidence_score": final_prediction["confidence_score"],
-            "predicted_trend": final_prediction["predicted_trend"],
-            "timestamp": datetime.utcnow().isoformat(),
-            "model_version": "simplified_demo",
-            "verified": False
-        }
-
-        save_prediction(prediction_data, cached_predictions)
-        print(f"[✅ Saved] {normalized_coin}: {final_prediction['predicted_trend']} (confidence: {final_prediction['confidence_score']:.2f})")
-
-
-def aggregate_predictions(predictions, coin):
-    """
-    Aggregate multiple predictions for a single coin.
-    
-    Note: Actual aggregation algorithm is proprietary.
-    """
-    # Simplified aggregation (actual logic is proprietary)
-    if not predictions:
-        return {"confidence_score": 0.0, "predicted_trend": 1}
-    
-    # Basic averaging (actual method is more sophisticated)
-    avg_confidence = np.mean([p["confidence_score"] for p in predictions])
-    avg_trend = np.mean([p["predicted_trend"] for p in predictions])
-    
-    return {
-        "coin": coin,
-        "confidence_score": round(avg_confidence, 2),
-        "predicted_trend": int(round(avg_trend))
-    }
-
-
-# Legacy function name for backward compatibility
-def run_timeseries_inference(model, input_features, coin=None):
-    return run_inference(model, input_features, coin)
-
-# Legacy function name for backward compatibility  
-def run_timeseries_pipeline(merged_df, feature_cols=None, use_latest_only=True):
-    return run_prediction_pipeline(merged_df, feature_cols, use_latest_only)
+        if use_latest_only:
+            latest_window = windows[-1]
+            try:
+                result = run_timeseries_inference(model, latest_window, asset=normalized_asset)
+                if result.get("finalscore") is not None:
+                    final_result = {
+                        "asset": normalized_asset,  # Use normalized asset name
+                        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "finalscore": round(result["finalscore"], 4),
+                        "pricetrend": "up" if result["finalscore"] > 0 else "down"
+                    }
+                    save_prediction(final_result, cached=cached_predictions, table_name="predictions")
+            except Exception as e:
+                print(f"[❌ Inference Error] {original_asset}: {e}")
+        else:
+            window_scores = []
+            for idx, window in enumerate(windows):
+                try:
+                    result = run_timeseries_inference(model, window, asset=normalized_asset)
+                    if result.get("finalscore") is not None:
+                        window_scores.append(result["finalscore"])
+                except Exception as e:
+                    print(f"[❌ Inference Error] {original_asset} (window {idx}): {e}")
+            if window_scores:
+                agg_result = aggregate_asset_scores(window_scores)
+                final_result = {
+                    "asset": normalized_asset,
+                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    **agg_result
+                }
+                save_prediction(final_result, cached=cached_predictions, table_name="predictions")

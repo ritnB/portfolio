@@ -6,32 +6,32 @@ from config import (
     SUPABASE_KEY,
     TECH_INDICATORS_TABLE,
     RECENT_DAYS,
-    normalize_coin_name
+    normalize_asset_name
 )
 
 # Create Supabase client
 client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # ============================
-# Prediction result storage
+# Save prediction results
 # ============================
 def load_recent_predictions(table_name="predictions", limit=100):
     try:
         response = client.table(table_name)\
-            .select("coin,timestamp")\
+            .select("asset,timestamp")\
             .order("timestamp", desc=True)\
             .limit(limit)\
             .execute()
         data = response.__dict__.get("data", [])
-        # Store in {(coin, timestamp_str): True} format for duplicate checking
-        cached = {(r['coin'], r['timestamp']): True for r in data}
+        # Store as {(asset, timestamp_str): True} for duplicate checking
+        cached = {(r['asset'], r['timestamp']): True for r in data}
         return cached
     except Exception as e:
         print(f"[❌] Failed to load recent predictions: {e}")
         return {}
 
 def save_prediction(data: dict, cached: dict, table_name="predictions"):
-    key = (data['coin'], data['timestamp'])
+    key = (data['asset'], data['timestamp'])
     if key in cached:
         print(f"[ℹ️] Prediction already exists for {key}, skipping insert.")
         return
@@ -43,7 +43,7 @@ def save_prediction(data: dict, cached: dict, table_name="predictions"):
         print(f"[❌] Failed to save prediction to Supabase: {e}")
 
 # ============================
-# Technical indicators loading (pagination method)
+# Load technical indicators (paging method)
 # ============================
 def load_technical_indicators() -> pd.DataFrame:
     start_datetime = datetime.combine(
@@ -77,14 +77,14 @@ def load_technical_indicators() -> pd.DataFrame:
     df = pd.DataFrame(all_data)
     df["timestamp"] = pd.to_datetime(df["timestamp"])
     
-    # Apply coin name normalization
-    df["coin"] = df["coin"].apply(normalize_coin_name)
-    print(f"[🔄] Normalized coin names. Unique coins: {df['coin'].unique()}")
+    # Apply asset name normalization
+    df["asset"] = df["asset"].apply(normalize_asset_name)
+    print(f"[🔄] Normalized asset names. Unique assets: {df['asset'].unique()}")
     
     return df
 
 # ============================
-# Reference time calculation
+# Calculate reference time
 # ============================
 def get_recent_threshold(table: str) -> str:
     latest_response = client.table(table)\
