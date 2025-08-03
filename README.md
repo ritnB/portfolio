@@ -34,7 +34,7 @@ Welcome! This repository showcases selected machine learning and AI projects, hi
 
 ---
 
-## 🛰️ 3. [6G Autonomous Network Security](./6G%20Autonomous%20Network%20Security/)
+## 🛰️ 3. [Trajectory-Based UAV Location Integrity Analysis](./6G%20Autonomous%20Network%20Security/)
 
 **Goal:** Detect GPS spoofing and location falsification attacks on UAVs  
 **Approach:** Trajectory-driven deep learning using RNN/Transformer models, fully GPS-agnostic  
