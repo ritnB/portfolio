@@ -5,6 +5,7 @@ Welcome! This repository showcases selected machine learning and AI projects, hi
 - Trajectory-based anomaly detection for network security  
 - AI-driven cryptocurrency analysis and content automation  
 - Time-series forecasting platforms with full MLOps pipelines  
+- Quantum computing applications in cybersecurity
 
 ---
 
@@ -34,7 +35,7 @@ Welcome! This repository showcases selected machine learning and AI projects, hi
 
 ---
 
-## 🛰️ 3. [Trajectory-Based UAV Location Integrity Analysis](./6G%20Autonomous%20Network%20Security/)
+## 🛰️ 3. [Trajectory-Based UAV Location Integrity Analysis](./Trajectory-Based%20UAV%20Location%20Integrity%20Analysis/)
 
 **Goal:** Detect GPS spoofing and location falsification attacks on UAVs  
 **Approach:** Trajectory-driven deep learning using RNN/Transformer models, fully GPS-agnostic  
@@ -43,14 +44,27 @@ Welcome! This repository showcases selected machine learning and AI projects, hi
 - End-to-end pipeline for integrity analysis
 - Published in IEEE Access (2024)
 
-🔗 [Read full description](./6G%20Autonomous%20Network%20Security/README.md)
+🔗 [Read full description](./Trajectory-Based%20UAV%20Location%20Integrity%20Analysis/README.md)
+
+---
+
+## 🔒 4. [QNN Security](./QNN%20Security/)
+
+**Goal:** Implement quantum neural networks for network intrusion detection  
+**Approach:** Quantum computing principles applied to cybersecurity using TensorFlow Quantum  
+**Highlights:**
+- Quantum feature encoding and hybrid classical-quantum training
+- NF-UNSW-NB15 dataset analysis with balanced preprocessing
+- Progressive implementation from basic setup to optimized QNN model
+
+🔗 [Read full description](./QNN%20Security/README.md)
 
 ---
 
 ## 👤 About Me
 
 **Mincheol Shin**  
-Machine Learning Engineer specializing in time-series, NLP, and AI automation.
+Machine Learning Engineer specializing in time-series, NLP, AI automation, and quantum computing.
 
 🔗 [LinkedIn](https://www.linkedin.com/in/min-shin-9a8797340/)  
 🔗 [GitHub](https://github.com/ritnB)
