@@ -5,8 +5,9 @@ import os
 from supabase import create_client
 from dotenv import load_dotenv
 from config import normalize_asset_name
+from utils.timestamp_utils import safe_parse_timestampz, normalize_timestamp_for_query
 
-# Load environment variables and create Supabase client
+# Load environment variables and create Database client
 load_dotenv()
 client = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
 
@@ -14,29 +15,35 @@ LABELING_BATCH_SIZE = 1000  # Batch processing size
 
 def normalize_asset_name_labeling(asset_name):
     """
-    Normalize asset name (using normalize_asset_name function from config.py)
+    Normalize asset names (using normalize_asset_name function from config.py)
     """
     return normalize_asset_name(asset_name)
 
 def get_unlabeled_records_paged(cutoff_time, batch_size=LABELING_BATCH_SIZE):
     """
-    Get records with NULL price_trend before cutoff_time using paging
+    Get records where price_trend is NULL and before cutoff_time using paging
     
     Args:
-        cutoff_time: Only records before this time
-        batch_size: Paging batch size
+        cutoff_time: datetime object or ISO format string
+        batch_size: paging batch size
     
     Returns:
-        generator: Returns data in batches
+        generator: returns data in batches
     """
+    # Normalize cutoff_time to ISO format string
+    if isinstance(cutoff_time, datetime):
+        cutoff_time_str = cutoff_time.isoformat()
+    else:
+        cutoff_time_str = cutoff_time
+    
     offset = 0
     
     while True:
-        # Query records with NULL price_trend before cutoff_time
+        # Query records where price_trend is NULL and before cutoff_time
         resp = client.table("technical_indicators") \
-            .select("id, asset, ema, timestamp") \
+            .select("id, asset, feature_2, timestamp") \
             .is_("price_trend", "null") \
-            .lte("timestamp", cutoff_time) \
+            .lte("timestamp", cutoff_time_str) \
             .order("id") \
             .range(offset, offset + batch_size - 1) \
             .execute()
@@ -48,28 +55,28 @@ def get_unlabeled_records_paged(cutoff_time, batch_size=LABELING_BATCH_SIZE):
         print(f"[📦] Loaded batch: {len(data)} records (offset: {offset})")
         yield data
         
-        # If less than batch size, no more data
+        # If fewer records than batch size, no more data
         if len(data) < batch_size:
             break
             
         offset += batch_size
 
-def find_future_ema(asset, timestamp, all_future_data):
+def find_future_feature(asset, timestamp, all_future_data):
     """
-    Find EMA value 4 hours after specific time for specific asset (with time range flexibility)
+    Find specific indicator value 4 hours after a given time for a specific asset (with time range flexibility)
     
     Args:
-        asset: Normalized asset name
-        timestamp: Reference time
-        all_future_data: Pre-loaded future data dictionary
+        asset: normalized asset name
+        timestamp: reference time
+        all_future_data: pre-loaded future data dictionary
     
     Returns:
-        float or None: EMA value 4 hours later
+        float or None: indicator value 4 hours later
     """
     target_time = timestamp + timedelta(hours=4)
     
-    # Set time range (±30 minutes buffer)
-    time_buffer = timedelta(minutes=30)
+    # Time range setting (±2 hours buffer)
+    time_buffer = timedelta(hours=2)
     search_start = target_time - time_buffer
     search_end = target_time + time_buffer
     
@@ -87,8 +94,8 @@ def find_future_ema(asset, timestamp, all_future_data):
             diff = abs(future_time - target_time)
             if diff < min_diff:
                 min_diff = diff
-                best_match = future_record['ema']
-                print(f"[⏱️] Found future EMA for {asset}: {future_time} (diff: {diff})")
+                best_match = future_record['feature_2']
+                print(f"[⏱️] Found future feature for {asset}: {future_time} (diff: {diff})")
     
     if best_match is not None:
         print(f"[✅] Best match for {asset}: {best_match} (target: {target_time}, actual: {target_time + min_diff if min_diff < timedelta.max else 'N/A'})")
@@ -100,12 +107,18 @@ def load_future_data_efficiently(min_timestamp):
     Load future data efficiently (load only once)
     
     Args:
-        min_timestamp: Minimum timestamp (load only data after this)
+        min_timestamp: datetime object or ISO format string
     
     Returns:
-        dict: Organized future data by asset
+        dict: organized future data by coin
     """
-    print(f"[📊] Loading future data from {min_timestamp}...")
+    # Normalize min_timestamp to ISO format string
+    if isinstance(min_timestamp, datetime):
+        min_timestamp_str = min_timestamp.isoformat()
+    else:
+        min_timestamp_str = min_timestamp
+    
+    print(f"[📊] Loading future data from {min_timestamp_str}...")
     
     future_data = {}
     offset = 0
@@ -113,9 +126,9 @@ def load_future_data_efficiently(min_timestamp):
     
     while True:
         resp = client.table("technical_indicators") \
-            .select("asset, ema, timestamp") \
-            .gte("timestamp", min_timestamp) \
-            .not_.is_("ema", "null") \
+            .select("asset, feature_2, timestamp") \
+            .gte("timestamp", min_timestamp_str) \
+            .not_.is_("feature_2", "null") \
             .order("asset, timestamp") \
             .range(offset, offset + batch_size - 1) \
             .execute()
@@ -124,7 +137,7 @@ def load_future_data_efficiently(min_timestamp):
         if not data:
             break
         
-        # Organize data by asset
+        # Organize data by coin
         for record in data:
             try:
                 normalized_asset = normalize_asset_name_labeling(record['asset'])
@@ -136,7 +149,7 @@ def load_future_data_efficiently(min_timestamp):
                     future_data[normalized_asset] = []
                 
                 future_data[normalized_asset].append({
-                    'ema': float(record['ema']),
+                    'feature_2': float(record['feature_2']),
                     'ts': ts
                 })
             except Exception as e:
@@ -150,7 +163,7 @@ def load_future_data_efficiently(min_timestamp):
             
         offset += batch_size
     
-    # Sort data by timestamp for each asset
+    # Sort data by timestamp for each coin
     for asset in future_data:
         future_data[asset].sort(key=lambda x: x['ts'])
     
@@ -159,49 +172,25 @@ def load_future_data_efficiently(min_timestamp):
     
     return future_data
 
-def parse_timestamp_safe(timestamp_str):
+def parse_timestamp_safe(timestamp_input):
     """
-    Safely parse timestamp string (supports multiple formats)
+    Safely parse timestampz (compatible with v11_2)
     
     Args:
-        timestamp_str: Timestamp string
+        timestamp_input: timestampz string or datetime object
     
     Returns:
-        datetime or None: Parsed datetime object
+        datetime or None: parsed datetime object
     """
-    if not timestamp_str:
-        return None
-    
-    # Remove Z
-    clean_timestamp = timestamp_str.replace('Z', '')
-    
-    # Try multiple formats
-    formats = [
-        "%Y-%m-%d %H:%M:%S",   # 2025-07-26 20:16:01
-        "%Y-%m-%d %H:%M",      # 2025-07-26 20:16
-        "%Y-%m-%dT%H:%M:%S",   # 2025-07-26T20:16:01
-        "%Y-%m-%dT%H:%M",      # 2025-07-26T20:16
-        "%Y-%m-%d",            # 2025-07-26
-    ]
-    
-    for fmt in formats:
-        try:
-            return datetime.strptime(clean_timestamp, fmt)
-        except ValueError:
-            continue
-    
-    # Try ISO format
     try:
-        return datetime.fromisoformat(clean_timestamp)
-    except ValueError:
-        pass
-    
-    print(f"[⚠️] Failed to parse timestamp: {timestamp_str}")
-    return None
+        return safe_parse_timestampz(timestamp_input)
+    except Exception as e:
+        print(f"[⚠️] Failed to parse timestampz: {timestamp_input}, error: {e}")
+        return None
 
 def run_labeling():
     """
-    Execute price_trend labeling pipeline
+    Run price_trend labeling pipeline
     """
     print("=== Labeling Pipeline Started ===")
     try:
@@ -214,12 +203,12 @@ def run_labeling():
         all_unlabeled_data = []
         offset = 0
         
-        # Get all unlabeled data up to the current time (to find future data)
+        # Get all unlabeled data up to the current time (to find data 4 hours later)
         # Fetch all unlabeled data without timestamp filtering
         
         while True:
             resp = client.table("technical_indicators") \
-                .select("id, asset, ema, timestamp") \
+                .select("id, asset, feature_2, timestamp") \
                 .is_("price_trend", "null") \
                 .order("timestamp", desc=True) \
                 .range(offset, offset + LABELING_BATCH_SIZE - 1) \
@@ -259,7 +248,7 @@ def run_labeling():
         print(f"[📅] Latest timestamp in data: {latest_timestamp}")
         print(f"[⏰] Actual cutoff time: {actual_cutoff_time}")
         
-        # Filter data based on actual cutoff time
+        # Filter data for records before the actual cutoff time
         filtered_data = []
         for record in all_unlabeled_data:
             parsed_ts = parse_timestamp_safe(record['timestamp'])
@@ -291,26 +280,26 @@ def run_labeling():
                 try:
                     original_asset = record['asset']
                     normalized_asset = normalize_asset_name_labeling(original_asset)
-                    current_ema = float(record['ema'])
+                    current_feature_2 = float(record['feature_2'])
                     timestamp = parse_timestamp_safe(record['timestamp'])
                     if timestamp is None:
                         print(f"[❌] Failed to parse timestamp for record {record.get('id', 'unknown')}")
                         continue
                     
-                    # Find 4-hour future EMA
-                    future_ema = find_future_ema(normalized_asset, timestamp, future_data)
+                    # Find future feature
+                    future_feature_2 = find_future_feature(normalized_asset, timestamp, future_data)
                     
                     # Price trend determination logic (same as SQL)
-                    if future_ema is None:
+                    if future_feature_2 is None:
                         # No data after 4 hours = down
                         if timestamp + timedelta(hours=4) <= now:
                             price_trend = 'down'
                         else:
                             # Still less than 4 hours = do not process
                             continue
-                    elif future_ema > current_ema:
+                    elif future_feature_2 > current_feature_2:
                         price_trend = 'up'
-                    elif future_ema < current_ema:
+                    elif future_feature_2 < current_feature_2:
                         price_trend = 'down'
                     else:
                         price_trend = 'neutral'

@@ -4,10 +4,10 @@ A sophisticated machine learning platform for asset (e.g., cryptocurrency or fin
 
 ## 🌟 Features
 
-- **Advanced ML Architecture**: Implements transformer-based model for time series forecasting (anonymized feature set)
+- **Advanced ML Architecture**: Implements transformer-based model for time series forecasting (**anonymized feature set**)
 - **Automated Pipeline**: Complete MLOps pipeline with training, inference, and retraining automation
 - **Real-time Predictions**: Flask API for real-time asset trend predictions
-- **Cloud Integration**: Seamless integration with Google Cloud Storage and Supabase
+- **Cloud Integration**: Seamless integration with cloud object storage and database (anonymized)
 - **Model Monitoring**: Automated accuracy monitoring with threshold-based retraining
 - **Scalable Design**: Configurable and anonymized feature engineering and model parameters
 
@@ -26,8 +26,8 @@ A sophisticated machine learning platform for asset (e.g., cryptocurrency or fin
 
 - **Backend**: Python, Flask
 - **ML Framework**: PyTorch, scikit-learn, Transformers
-- **Database**: Supabase (PostgreSQL)
-- **Cloud Storage**: Google Cloud Storage
+- **Database**: (anonymized, e.g. Supabase/PostgreSQL)
+- **Cloud Storage**: (anonymized, e.g. Google Cloud Storage)
 - **Hyperparameter Tuning**: Optuna
 - **Data Processing**: Pandas, NumPy
 - **Deployment**: Docker, Gunicorn
@@ -36,36 +36,36 @@ A sophisticated machine learning platform for asset (e.g., cryptocurrency or fin
 
 ```
 ├── app.py                          # Flask API entry point
-├── config.py                       # Environment configuration (anonymized)
+├── config.py                       # Environment configuration (**anonymized**)
 ├── requirements.txt                # Dependencies
 ├── Dockerfile                      # Container configuration
 │
 ├── pipelines/                      # ML pipelines
-│   ├── pipeline_timeseries.py      # Time series prediction pipeline
+│   ├── pipeline_timeseries.py      # Time series prediction pipeline (**anonymized**)
 │   ├── pipeline_verify.py          # Prediction verification pipeline
 │   ├── pipeline_retrain.py         # Automated retraining pipeline
-│   ├── pipeline_incremental.py     # Incremental learning pipeline
-│   ├── pipeline_labeling.py        # Data labeling pipeline
+│   ├── pipeline_incremental.py     # Incremental learning pipeline (**anonymized**)
+│   ├── pipeline_labeling.py        # Data labeling pipeline (**anonymized**)
 │   └── __init__.py
 │
 ├── models/                         # Model definitions and storage
-│   ├── timeseries_model.py         # Transformer model architecture (anonymized)
-│   ├── *.pt                        # Trained model weights
-│   └── *.pkl                       # Feature scalers
+│   ├── timeseries_model.py         # Transformer model architecture (**anonymized**)
+│   ├── *.pt                        # Trained model weights (**anonymized**)
+│   └── *.pkl                       # Feature scalers (**anonymized**)
 │
 ├── data/                           # Data processing modules
-│   ├── preprocess.py               # Data preprocessing utilities (anonymized features)
-│   └── supabase_io.py              # Database I/O operations
+│   ├── preprocess.py               # Data preprocessing utilities (**anonymized features**)
+│   └── supabase_io.py              # Database I/O operations (**anonymized**)
 │
 ├── inference/                      # Model inference
-│   └── timeseries_inference.py     # Prediction execution
+│   └── timeseries_inference.py     # Prediction execution (**anonymized**)
 │
 ├── trainers/                       # Model training
-│   └── train_patchtst.py           # Model training script
+│   └── train_patchtst.py           # Model training script (**anonymized**)
 │
 ├── utils/                          # Utility modules
-│   ├── gcs_utils.py                # Google Cloud Storage utilities
-│   └── training_utils.py           # Training helper functions (anonymized hyperparameters)
+│   ├── gcs_utils.py                # Cloud Storage utilities (**anonymized**)
+│   └── training_utils.py           # Training helper functions (**anonymized hyperparameters**)
 │
 └── debug_tools/                    # Debugging/diagnostics tools
     └── debug_tools.py
@@ -76,8 +76,8 @@ A sophisticated machine learning platform for asset (e.g., cryptocurrency or fin
 ### Prerequisites
 
 - Python 3.8+
-- Database system (Supabase recommended)
-- Cloud storage bucket (for production)
+- Database system (anonymized, e.g. Supabase recommended)
+- Cloud storage bucket (for production, anonymized)
 
 ### Installation
 
@@ -98,7 +98,9 @@ A sophisticated machine learning platform for asset (e.g., cryptocurrency or fin
    ENV_TYPE=local
    SUPABASE_URL=your_database_url
    SUPABASE_KEY=your_database_key
+   GCS_BUCKET_NAME=your_bucket_name
    # ...other required variables (see config.py)
+   # All numeric parameters should be set as exponential values (e.g. 1e-3)
    ```
 
 4. **Run the application**
@@ -148,12 +150,12 @@ curl http://localhost:8080/
 
 ### Transformer Architecture
 - **Attention-based approach**: Leverages self-attention mechanisms for temporal dependencies
-- **Configurable & anonymized**: Model dimensions, layers, and hyperparameters are anonymized for public release
-- **Multi-feature input**: Processes multiple anonymized features simultaneously
+- **Configurable & anonymized**: Model dimensions, layers, and hyperparameters are anonymized for public release (e.g., window_size=1e2, d_model=1e2)
+- **Multi-feature input**: Processes multiple anonymized features simultaneously (e.g., feature_1, feature_2, ...)
 - **Sequence modeling**: Handles variable-length time series data
 
 ### Supported Assets
-- Generic asset mapping system (anonymized)
+- Generic asset mapping system (**anonymized**)
 - Easily extensible to additional financial instruments
 
 ### Feature Engineering
@@ -163,11 +165,11 @@ curl http://localhost:8080/
 
 ## 🔄 MLOps Pipeline
 
-1. **Data Ingestion**: Automated fetching of market data and indicators
-2. **Model Training**: Transformer training with anonymized hyperparameter optimization
-3. **Model Deployment**: Automatic model versioning and cloud storage
+1. **Data Ingestion**: Automated fetching of market data and indicators (**anonymized**)
+2. **Model Training**: Transformer training with anonymized hyperparameter optimization (e.g., learning_rate=1e-3)
+3. **Model Deployment**: Automatic model versioning and cloud storage (**anonymized**)
 4. **Inference**: Real-time prediction generation
-5. **Monitoring**: Performance tracking and automated retraining triggers
+5. **Monitoring**: Performance tracking and automated retraining triggers (e.g., threshold=1e-1)
 6. **Verification**: Historical prediction validation
 
 ## 🐳 Docker Deployment
@@ -183,19 +185,19 @@ docker run -p 8080:8080 --env-file .env asset-prediction-platform
 ## 📈 Performance Monitoring
 
 The platform includes automated performance monitoring:
-- **Configurable thresholds**: Adjustable accuracy requirements (anonymized in config)
-- **Rolling evaluation**: Time-window based performance calculation
-- **Auto-retraining**: Triggered when performance drops below thresholds
-- **Model versioning**: Timestamped model artifacts in cloud storage
+- **Configurable thresholds**: Adjustable accuracy requirements (**exponential values, e.g. 1e-1**)
+- **Rolling evaluation**: Time-window based performance calculation (e.g., window_size=1e2)
+- **Auto-retraining**: Triggered when performance drops below thresholds (threshold=1e-1)
+- **Model versioning**: Timestamped model artifacts in cloud storage (**anonymized**)
 
 ## ⚙️ Configuration
 
-Key configuration options (all anonymized):
-- Model architecture parameters
-- Training hyperparameters
-- Performance thresholds
-- Feature selection
-- Data processing parameters
+Key configuration options (**all anonymized**):
+- Model architecture parameters (e.g., d_model=1e2, num_layers=1e0)
+- Training hyperparameters (e.g., learning_rate=1e-3, batch_size=1e2)
+- Performance thresholds (e.g., threshold=1e-1)
+- Feature selection (see `FEATURE_COLS` in config.py)
+- Data processing parameters (e.g., sequence_length=1e2)
 
 ## 🔒 Security & Privacy
 

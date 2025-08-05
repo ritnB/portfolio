@@ -10,9 +10,9 @@ def get_recent_date_range(recent_days=7):
 
 def print_technical_matrix(tech_df, recent_days=7):
     """
-    기술지표 데이터 존재 여부를 날짜별로 출력
+    Print technical indicator data existence by date
     """
-    print("\n========== [📊 기술지표 존재 매트릭스] ==========")
+    print("\n========== [📊 Technical Indicator Existence Matrix] ==========")
     date_range = get_recent_date_range(recent_days)
     coins = sorted(tech_df["coin"].unique())
 
@@ -28,8 +28,8 @@ def print_technical_matrix(tech_df, recent_days=7):
 
 
 def print_remaining_coins(merged_df):
-    print("\n========== [🔍 남은 코인 진단] ==========")
+    print("\n========== [🔍 Remaining Coins Diagnosis] ==========")
     remaining_coins = sorted(merged_df["coin"].unique())
-    print(f"남은 코인 수: {len(remaining_coins)}")
-    print(f"코인 목록: {remaining_coins}")
+    print(f"Number of remaining coins: {len(remaining_coins)}")
+    print(f"Coin list: {remaining_coins}")
     print("===========================================")

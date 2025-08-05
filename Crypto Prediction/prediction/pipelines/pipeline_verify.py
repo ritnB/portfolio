@@ -4,23 +4,24 @@ from datetime import datetime, timedelta
 import os
 from supabase import create_client
 from dotenv import load_dotenv
-from config import normalize_asset_name, VERIFY_MAX_RECORDS, VERIFY_BATCH_SIZE
+from config import normalize_coin_name, VERIFY_MAX_RECORDS, VERIFY_BATCH_SIZE
+from utils.timestamp_utils import safe_parse_timestampz, normalize_timestamp_for_query
 
 # Load environment variables and create Supabase client
 load_dotenv()
 client = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
 
-def load_technical_indicators_paged(asset=None, max_records=VERIFY_MAX_RECORDS, batch_size=VERIFY_BATCH_SIZE):
+def load_technical_indicators_paged(coin=None, max_records=VERIFY_MAX_RECORDS, batch_size=VERIFY_BATCH_SIZE):
     """
-    Load technical_indicators data using paging method.
+    Load technical_indicators data in a paginated way.
     
     Args:
-        asset: Filter by specific asset (None for all)
+        coin: Filter by specific coin (all if None)
         max_records: Maximum number of records
         batch_size: Paging batch size
     
     Returns:
-        list: technical_indicators data list
+        list: List of technical_indicators data
     """
     all_data = []
     offset = 0
@@ -28,13 +29,13 @@ def load_technical_indicators_paged(asset=None, max_records=VERIFY_MAX_RECORDS, 
     while len(all_data) < max_records:
         # Build query
         query = client.table("technical_indicators") \
-            .select("timestamp, price_trend, asset") \
+            .select("timestamp, price_trend, coin") \
             .order("timestamp", desc=True) \
             .range(offset, offset + batch_size - 1)
         
-        # Add asset filtering
-        if asset:
-            query = query.eq("asset", asset)
+        # Add coin filter
+        if coin:
+            query = query.eq("coin", coin)
         
         resp = query.execute()
         
@@ -43,56 +44,44 @@ def load_technical_indicators_paged(asset=None, max_records=VERIFY_MAX_RECORDS, 
         
         all_data.extend(resp.data)
         
-        # If less than batch size, no more data
+        # If fewer than batch size, no more data
         if len(resp.data) < batch_size:
             break
-            
+        
         offset += batch_size
         
         print(f"[📦] Loaded {len(all_data)} records so far...")
     
-    # Truncate if exceeding max_records
+    # Truncate if over max_records
     if len(all_data) > max_records:
         all_data = all_data[:max_records]
     
     return all_data
 
-def parse_prediction_timestamp(timestamp_str):
-    """Parse predictions table timestamp (supports multiple formats)"""
+def parse_prediction_timestamp(timestamp_input):
+    """Parse timestampz from predictions table (v11_2 compatible)"""
     try:
-        # Remove Z and parse ISO format
-        clean_timestamp = timestamp_str.replace("Z", "")
-        return datetime.fromisoformat(clean_timestamp)
+        return safe_parse_timestampz(timestamp_input)
     except Exception as e:
-        print(f"[⚠️] Failed to parse prediction timestamp: {timestamp_str}, error: {e}")
+        print(f"[⚠️] Failed to parse prediction timestampz: {timestamp_input}, error: {e}")
         return None
 
-def parse_technical_timestamp(timestamp_str):
-    """Parse technical_indicators table timestamp (supports multiple formats)"""
-    formats = [
-        "%Y-%m-%d %H:%M",      # 2025-03-01 10:34
-        "%Y-%m-%d %H:%M:%S",   # 2025-03-01 10:34:00
-        "%Y-%m-%dT%H:%M",      # 2025-03-01T10:34
-        "%Y-%m-%dT%H:%M:%S",   # 2025-03-01T10:34:00
-    ]
-    
-    for fmt in formats:
-        try:
-            return datetime.strptime(timestamp_str, fmt)
-        except ValueError:
-            continue
-    
-    print(f"[⚠️] Failed to parse technical timestamp: {timestamp_str}")
-    return None
+def parse_technical_timestamp(timestamp_input):
+    """Parse timestampz from technical_indicators table (v11_2 compatible)"""
+    try:
+        return safe_parse_timestampz(timestamp_input)
+    except Exception as e:
+        print(f"[⚠️] Failed to parse technical timestampz: {timestamp_input}, error: {e}")
+        return None
 
 def run_verification():
     print("=== Verification Pipeline Started ===")
     try:
         now = datetime.utcnow()
-        cutoff_time_str = (now - timedelta(hours=4)).isoformat()  # for text
-        cutoff_time_ts = now - timedelta(hours=4)  # for timestamp
+        cutoff_time_str = (now - timedelta(hours=5)).isoformat()  # for text
+        cutoff_time_ts = now - timedelta(hours=5)  # for timestamp
 
-        # Load all predictions (paging in 1000 unit)
+        # Load all predictions (paging by 1000)
         predictions = []
         page = 0
         while True:
@@ -114,16 +103,16 @@ def run_verification():
 
         updated = 0
         parse_errors = 0
-        batch_updates = []  # 🚀 Batch update for
+        batch_updates = []  # For batch update
         
-        # 🚀 Optimize: Caching normalized coin
-        asset_normalization_cache = {}
-        def get_normalized_asset(original_asset):
-            if original_asset not in asset_normalization_cache:
-                asset_normalization_cache[original_asset] = normalize_asset_name(original_asset)
-            return asset_normalization_cache[original_asset]
+        # Optimization: normalization cache
+        coin_normalization_cache = {}
+        def get_normalized_coin(original_coin):
+            if original_coin not in coin_normalization_cache:
+                coin_normalization_cache[original_coin] = normalize_coin_name(original_coin)
+            return coin_normalization_cache[original_coin]
         
-        # 🚀 Optimize: Calculate time range for predictions
+        # Optimization: calculate time range of predictions
         prediction_times = []
         for row in predictions:
             pred_time = parse_prediction_timestamp(row["timestamp"])
@@ -136,7 +125,7 @@ def run_verification():
         min_pred_time = min(prediction_times)
         max_pred_time = max(prediction_times)
         
-        # ±3 hours buffer for time range (actually ±2 hours matching, but safety margin)
+        # Time range with ±3 hours buffer (actual matching uses ±2 hours, but margin for safety)
         time_buffer = timedelta(hours=3)
         min_load_time = min_pred_time - time_buffer
         max_load_time = max_pred_time + time_buffer
@@ -145,10 +134,10 @@ def run_verification():
         print(f"[📦] Loading technical indicators in optimized time range...")
         
         # Load all technical_indicators data at once
-        all_technical_data = load_technical_indicators_paged(asset=None)
+        all_technical_data = load_technical_indicators_paged(coin=None)
         
-        # Filter by time range, group by asset, and sort by time
-        technical_by_asset = {}
+        # Filter by time range + group by coin + sort by time
+        technical_by_coin = {}
         filtered_count = 0
         
         for entry in all_technical_data:
@@ -158,24 +147,24 @@ def run_verification():
                 continue
             
             filtered_count += 1
-            normalized_asset = get_normalized_asset(entry["asset"])
+            normalized_coin = get_normalized_coin(entry["coin"])
             
-            if normalized_asset not in technical_by_asset:
-                technical_by_asset[normalized_asset] = []
+            if normalized_coin not in technical_by_coin:
+                technical_by_coin[normalized_coin] = []
             
-            # Store with time (for sorting later)
-            technical_by_asset[normalized_asset].append((ts, entry))
+            # Save with time (for later sorting)
+            technical_by_coin[normalized_coin].append((ts, entry))
         
-        # Sort by time for each asset
-        for asset in technical_by_asset:
-            technical_by_asset[asset].sort(key=lambda x: x[0])
+        # Sort by time for each coin
+        for coin in technical_by_coin:
+            technical_by_coin[coin].sort(key=lambda x: x[0])
         
-        print(f"[✅] Loaded {filtered_count}/{len(all_technical_data)} technical indicators for {len(technical_by_asset)} assets (time-filtered)")
+        print(f"[✅] Loaded {filtered_count}/{len(all_technical_data)} technical indicators for {len(technical_by_coin)} coins (time-filtered)")
         
         for row in predictions:
             try:
-                original_asset = row["asset"]
-                asset = get_normalized_asset(original_asset)  # Cached normalized
+                original_coin = row["coin"]
+                coin = get_normalized_coin(original_coin)  # Cached normalization
                 predicted_trend = row.get("pricetrend")
                 
                 # Improved timestamp parsing
@@ -184,29 +173,29 @@ def run_verification():
                     parse_errors += 1
                     continue
 
-                print(f"[🔍] Processing {original_asset} -> {asset} - Prediction time: {prediction_time}")
+                print(f"[🔍] Processing {original_coin} -> {coin} - Prediction time: {prediction_time}")
 
-                # 🚀 Optimize: Efficient search in time-sorted data
-                asset_time_data = technical_by_asset.get(asset, [])
-                print(f"[📊] Found {len(asset_time_data)} technical indicators for {asset}")
+                # Optimization: fast matching in time-sorted data
+                coin_time_data = technical_by_coin.get(coin, [])
+                print(f"[📊] Found {len(coin_time_data)} technical indicators for {coin}")
                 
                 actual_trend = None
                 min_diff = timedelta.max
-                valid_entries = len(asset_time_data)
+                valid_entries = len(coin_time_data)
                 within_time_range = 0
                 has_matching_data = False
                 
-                # 🚀 Optimize: Efficient search in time-sorted data
+                # Optimization: efficient search in time-sorted data
                 time_threshold = timedelta(hours=2)
                 search_start = prediction_time - time_threshold
                 search_end = prediction_time + time_threshold
                 
-                for ts, entry in asset_time_data:
+                for ts, entry in coin_time_data:
                     # Not yet reached search range
                     if ts < search_start:
                         continue
                     
-                    # Exceeded search range (time-sorted, no need to check further)
+                    # Out of search range (sorted by time, so no need to check further)
                     if ts > search_end:
                         break
                     
@@ -224,14 +213,14 @@ def run_verification():
 
                 print(f"[📈] Valid entries: {valid_entries}, Within 2h: {within_time_range}, Final trend: {actual_trend}")
 
-                # Handle based on whether data exists
+                # Handle differently depending on whether data exists
                 if actual_trend is None:
                     if has_matching_data:
                         # Data exists but price_trend is NULL - skip verification
                         print(f"[⏸️] Matching data found but price_trend is NULL, skipping verification")
-                        continue  # Do not verify this prediction and move to the next
+                        continue  # Skip this prediction
                     else:
-                        # No matching data at all - default to 'down'
+                        # No matching data at all - treat as down
                         actual_trend = "down"
                         print(f"[⚠️] No matching data found within 2 hours, defaulting to 'down'")
                 
@@ -239,31 +228,31 @@ def run_verification():
 
                 # Collect data for batch update
                 batch_updates.append({
-                    "asset": original_asset,
+                    "coin": original_coin,
                     "timestamp": row["timestamp"],
                     "actual_trend": actual_trend,
                     "is_correct": is_correct
                 })
 
                 updated += 1
-                print(f"[📝] Queued {original_asset}: predicted={predicted_trend}, actual={actual_trend}, correct={is_correct}")
+                print(f"[📝] Queued {original_coin}: predicted={predicted_trend}, actual={actual_trend}, correct={is_correct}")
 
             except Exception as row_error:
                 print(f"[❌ Verification Error] {row_error}")
                 continue
 
-        # 🚀 Execute batch updates (fallback to individual updates)
+        # Execute batch updates (fallback to individual updates)
         if batch_updates:
             print(f"[💾] Executing batch updates for {len(batch_updates)} predictions...")
             try:
-                # Supabase does not support batch updates, so individual updates
-                # But logic is managed in batches to maintain consistency
+                # Supabase does not support batch update, so update individually
+                # But manage logic as batch for consistency
                 for update in batch_updates:
                     client.table("predictions").update({
                         "actual_trend": update["actual_trend"],
                         "is_correct": update["is_correct"],
                         "verified": True
-                    }).eq("asset", update["asset"]).eq("timestamp", update["timestamp"]).execute()
+                    }).eq("coin", update["coin"]).eq("timestamp", update["timestamp"]).execute()
                 print(f"[✅] Batch updates completed successfully")
             except Exception as e:
                 print(f"[❌] Batch updates failed: {e}")
