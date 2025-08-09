@@ -7,10 +7,10 @@ from google.oauth2 import service_account
 
 
 def get_storage_client():
-    """
-    When running locally, if GOOGLE_APPLICATION_CREDENTIALS is set,
-    use the JSON key file for authentication and return an authenticated storage.Client.
-    In GCP Cloud Run etc., use default authentication method.
+    """Create a storage client.
+
+    If GOOGLE_APPLICATION_CREDENTIALS is set locally, use that JSON key.
+    Otherwise rely on default credentials (e.g., Cloud Run).
     """
     cred_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
     if cred_path and os.path.isfile(cred_path):
@@ -21,42 +21,31 @@ def get_storage_client():
 
 
 def upload_to_gcs(local_path: str, bucket_name: str, gcs_path: str):
-    """
-    Upload local file to GCS.
-    """
+    """Upload a local file to GCS."""
     try:
         client = get_storage_client()
         bucket = client.bucket(bucket_name)
         blob = bucket.blob(gcs_path)
         blob.upload_from_filename(local_path)
-        print(f"✅ GCS upload successful: gs://{bucket_name}/{gcs_path}")
+        print(f"✅ GCS upload success: gs://{bucket_name}/{gcs_path}")
     except Exception as e:
         print(f"[❌] GCS upload failed: {e}")
 
 
 def download_from_gcs(bucket_name: str, gcs_path: str, local_path: str):
-    """
-    Download file from GCS to local path.
-    """
+    """Download a file from GCS to a local path."""
     try:
         client = get_storage_client()
         bucket = client.bucket(bucket_name)
         blob = bucket.blob(gcs_path)
         blob.download_to_filename(local_path)
-        print(f"📥 GCS download successful: gs://{bucket_name}/{gcs_path} → {local_path}")
+        print(f"📥 GCS download success: gs://{bucket_name}/{gcs_path} → {local_path}")
     except Exception as e:
         print(f"[❌] GCS download failed: {e}")
 
 
-def get_latest_model_filename(bucket_name: str, prefix: str = "models/patchtst_final_model_") -> Optional[str]:
-    """
-    Return the latest PatchTST model filename from GCS bucket.
-    prefix can be "models/patchtst_final_model_" or "models/patchtst_incremental_" etc.
-
-    Returns:
-        Latest filename (e.g., models/patchtst_final_model_20250721.pt)
-        None if not found
-    """
+def get_latest_model_filename(bucket_name: str, prefix: str = "models/patchseq_final_model_") -> Optional[str]:
+    """Return the latest PatchTST model blob name in GCS for a given prefix."""
     try:
         client = get_storage_client()
         blobs = client.list_blobs(bucket_name, prefix=prefix)
@@ -68,12 +57,12 @@ def get_latest_model_filename(bucket_name: str, prefix: str = "models/patchtst_f
             name = os.path.basename(blob.name)
             try:
                 # Support various model types (final, incremental, etc.)
-                if "patchtst_final_model_" in name:
-                    date_str = name.replace("patchtst_final_model_", "").replace(".pt", "")
-                elif "patchtst_incremental_" in name:
-                    date_str = name.replace("patchtst_incremental_", "").replace(".pt", "")
+                if "patchseq_final_model_" in name:
+                    date_str = name.replace("patchseq_final_model_", "").replace(".pt", "")
+                elif "patchseq_incremental_" in name:
+                    date_str = name.replace("patchseq_incremental_", "").replace(".pt", "")
                 else:
-                    # Try to extract date using general pattern
+                    # Fallback: extract YYYYMMDD via regex
                     import re
                     date_match = re.search(r'(\d{8})', name)
                     if date_match:
@@ -90,18 +79,12 @@ def get_latest_model_filename(bucket_name: str, prefix: str = "models/patchtst_f
 
         return latest_blob_name
     except Exception as e:
-        print(f"[❌] GCS model list retrieval failed: {e}")
+        print(f"[❌] Failed to list models in GCS: {e}")
         return None
 
 
 def get_latest_scaler_filename(bucket_name: str, prefix: str = "models/scaler_standard_") -> Optional[str]:
-    """
-    Return the latest scaler filename from GCS bucket.
-    
-    Returns:
-        최신 파일명 (예: models/scaler_standard_20250721.pkl)
-        없으면 None
-    """
+    """Return the latest scaler blob name in GCS for a given prefix."""
     try:
         client = get_storage_client()
         blobs = client.list_blobs(bucket_name, prefix=prefix)
@@ -112,11 +95,11 @@ def get_latest_scaler_filename(bucket_name: str, prefix: str = "models/scaler_st
         for blob in blobs:
             name = os.path.basename(blob.name)
             try:
-                # scaler_standard_YYYYMMDD.pkl 패턴
+                # scaler_standard_YYYYMMDD.pkl pattern
                 if "scaler_standard_" in name:
                     date_str = name.replace("scaler_standard_", "").replace(".pkl", "")
                 else:
-                    # 일반적인 패턴으로 날짜 추출 시도
+                    # Fallback: extract YYYYMMDD via regex
                     import re
                     date_match = re.search(r'(\d{8})', name)
                     if date_match:
@@ -133,19 +116,13 @@ def get_latest_scaler_filename(bucket_name: str, prefix: str = "models/scaler_st
 
         return latest_blob_name
     except Exception as e:
-        print(f"[❌] GCS scaler list retrieval failed: {e}")
+        print(f"[❌] Failed to list scalers in GCS: {e}")
         return None
 
 
 def download_latest_model_and_scaler(bucket_name: str, model_local_path: str = "/tmp/latest_model.pt", 
                                    scaler_local_path: str = "/tmp/latest_scaler.pkl") -> tuple[bool, bool]:
-    """
-    Download the latest model and scaler from GCS.
-    Check for v11_2 compatibility.
-    
-    Returns:
-        (model_success, scaler_success) tuple
-    """
+    """Download latest model and scaler from GCS and verify v11_2 compatibility."""
     model_success = False
     scaler_success = False
     
@@ -153,7 +130,7 @@ def download_latest_model_and_scaler(bucket_name: str, model_local_path: str = "
     latest_model = get_latest_model_filename(bucket_name)
     if latest_model:
         download_from_gcs(bucket_name, latest_model, model_local_path)
-        # Check v11_2 compatibility
+        # Verify v11_2 compatibility
         model_success = verify_v11_2_model_compatibility(model_local_path)
     else:
         print("⚠️ Could not find latest model in GCS.")
@@ -170,12 +147,11 @@ def download_latest_model_and_scaler(bucket_name: str, model_local_path: str = "
 
 
 def verify_v11_2_model_compatibility(model_path: str) -> bool:
-    """
-    Check compatibility with the model format saved by v11_2.
-    
+    """Verify compatibility of a saved model with v11_2 format.
+
     Expected format:
     {
-        'model_class': 'PatchTST',
+        'model_class': 'PatchSequenceModel',
         'model_args': {...},
         'state_dict': {...}
     }
@@ -184,19 +160,19 @@ def verify_v11_2_model_compatibility(model_path: str) -> bool:
         import torch
         checkpoint = torch.load(model_path, map_location='cpu')
         
-        # Check required keys
+        # Required keys
         required_keys = ['model_class', 'model_args', 'state_dict']
         for key in required_keys:
             if key not in checkpoint:
-                print(f"❌ Model compatibility check failed: '{key}' key missing.")
+                print(f"❌ Model compatibility check failed: missing key '{key}'")
                 return False
         
-        # Check model class
-        if checkpoint['model_class'] != 'PatchTST':
+        # Model class check (generic)
+        if checkpoint['model_class'] != 'PatchSequenceModel':
             print(f"❌ Model class mismatch: {checkpoint['model_class']}")
             return False
         
-        # Check v11_2 required model_args
+        # v11_2 required model_args
         model_args = checkpoint['model_args']
         v11_2_required_args = [
             'input_size', 'd_model', 'num_layers', 'num_heads', 'patch_size', 
@@ -206,15 +182,10 @@ def verify_v11_2_model_compatibility(model_path: str) -> bool:
         
         missing_args = [arg for arg in v11_2_required_args if arg not in model_args]
         if missing_args:
-            print(f"❌ Missing model arguments: {missing_args}")
+            print(f"❌ Missing model_args: {missing_args}")
             return False
         
-        print(f"✅ v11_2 model compatibility check complete")
-        print(f"  - window_size: {model_args['window_size']}")
-        print(f"  - patch_size: {model_args['patch_size']}")
-        print(f"  - stride: {model_args['stride']}")
-        print(f"  - classification_threshold: {model_args['classification_threshold']}")
-        print(f"  - loss_type: {model_args.get('loss_type', 'ce')}")
+        print("✅ Model compatibility verified (v11_2)")
         
         return True
         
@@ -224,30 +195,28 @@ def verify_v11_2_model_compatibility(model_path: str) -> bool:
 
 
 def verify_scaler_compatibility(scaler_path: str) -> bool:
-    """
-    Check scaler file compatibility.
-    """
+    """Verify scaler type and training state."""
     try:
         import joblib
         from sklearn.preprocessing import StandardScaler
         
         scaler = joblib.load(scaler_path)
         
-        # Check StandardScaler type
+        # Type check
         if not isinstance(scaler, StandardScaler):
             print(f"❌ Scaler type mismatch: {type(scaler)}")
             return False
         
-        # Check trained state
+        # Fitted state check
         if not hasattr(scaler, 'mean_') or not hasattr(scaler, 'scale_'):
-            print(f"❌ Scaler not trained.")
+            print(f"❌ Scaler is not fitted")
             return False
         
         feature_count = len(scaler.mean_)
-        print(f"✅ Scaler compatibility check complete")
-        print(f"  - Feature count: {feature_count}")
-        print(f"  - Mean range: [{scaler.mean_.min():.4f}, {scaler.mean_.max():.4f}]")
-        print(f"  - Scale range: [{scaler.scale_.min():.4f}, {scaler.scale_.max():.4f}]")
+        print(f"✅ Scaler compatibility verified")
+        print(f"  - feature count: {feature_count}")
+        print(f"  - mean range: [{scaler.mean_.min():.4f}, {scaler.mean_.max():.4f}]")
+        print(f"  - scale range: [{scaler.scale_.min():.4f}, {scaler.scale_.max():.4f}]")
         
         return True
         

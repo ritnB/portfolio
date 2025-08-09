@@ -1,5 +1,4 @@
-# utils/training_utils.py
-# Enhanced Callbacks and Training utilities from v11_2_refactored.py
+"""Training utilities and callbacks (v11_2-compatible)."""
 
 import time
 import numpy as np
@@ -20,14 +19,48 @@ except ImportError:
     OPTUNA_AVAILABLE = False
     print("⚠️ Optuna not installed. Hyperparameter tuning disabled")
 
-from models.timeseries_model import PatchTST, FocalLoss
+from models.timeseries_model import PatchSequenceModel, FocalLoss
 from data.preprocess import CoinTimeSeriesDataset, get_sequences, rolling_window_cv_split
 from utils.memory_utils import safe_memory_cleanup, monitor_memory_usage, check_memory_limit
 from config import OPTUNA_PARAM_SPACE
 
+# Fold-wise scaler cache
+_fold_scaler_cache = {}  # {(window_size, fold_idx): scaler}
+
+
+def get_cached_fold_scaler(window_size, fold_idx, train_sequences, feature_cols, force_regenerate=False):
+    """Get or build a cached StandardScaler for a given fold."""
+    global _fold_scaler_cache
+    
+    cache_key = (window_size, fold_idx)
+    
+    # Build when forced or missing in cache
+    if force_regenerate or cache_key not in _fold_scaler_cache:
+        print(f"🔄 Building scaler (window_size={window_size}, fold={fold_idx})...")
+        scaler = StandardScaler()
+        
+        # Fit on train sequences only
+        for seq in train_sequences:
+            scaler.partial_fit(seq[feature_cols])
+        
+        _fold_scaler_cache[cache_key] = scaler
+        print(f"✅ Scaler cached (window_size={window_size}, fold={fold_idx})")
+    else:
+        print(f"♻️ Using cached scaler (window_size={window_size}, fold={fold_idx})")
+    
+    return _fold_scaler_cache[cache_key]
+
+
+def clear_fold_scaler_cache():
+    """Clear fold-wise scaler cache."""
+    global _fold_scaler_cache
+    cache_count = len(_fold_scaler_cache)
+    _fold_scaler_cache.clear()
+    print(f"🧹 Cleared scaler cache ({cache_count} entries removed)")
+
 
 class EnhancedEarlyStoppingCallback(TrainerCallback):
-    """Enhanced Early Stopping Callback from v11_2"""
+    """Enhanced Early Stopping Callback (v11_2)."""
     def __init__(self, patience=5, max_loss_diff=0.05, min_f1_improvement=0.0005):
         self.patience = patience
         self.max_loss_diff = max_loss_diff
@@ -51,11 +84,11 @@ class EnhancedEarlyStoppingCallback(TrainerCallback):
         # Overfitting detection
         loss_diff = eval_loss - self.last_train_loss
         if loss_diff > self.max_loss_diff:
-            print(f"⏹️ Enhanced Early stopping: Severe overfitting detected")
+            print(f"⏹️ Enhanced Early stopping: severe overfitting detected")
             control.should_training_stop = True
             return control
 
-        # F1 score improvement check
+        # F1 improvement check
         if self.best_f1 is None:
             self.best_f1 = eval_f1
             self.wait = 0
@@ -72,13 +105,13 @@ class EnhancedEarlyStoppingCallback(TrainerCallback):
                 self.epochs_without_improvement += 1
                 
                 if self.wait >= self.patience:
-                    print(f"⏹️ Enhanced Early stopping: No F1 improvement")
+                    print(f"⏹️ Enhanced Early stopping: no F1 improvement")
                     control.should_training_stop = True
                     return control
 
-        # Consecutive no improvement check
+        # No improvement streak
         if self.epochs_without_improvement >= 10:
-            print(f"⏹️ Enhanced Early stopping: No improvement for 10 consecutive epochs")
+            print(f"⏹️ Enhanced Early stopping: no improvement for 10 evaluations")
             control.should_training_stop = True
             return control
 
@@ -86,7 +119,7 @@ class EnhancedEarlyStoppingCallback(TrainerCallback):
 
 
 class OptunaPruningCallback(TrainerCallback):
-    """Optuna Pruning Callback from v11_2"""
+    """Optuna Pruning Callback (v11_2)."""
     def __init__(self, trial):
         self.trial = trial
         self.last_reported_step = -1
@@ -98,35 +131,35 @@ class OptunaPruningCallback(TrainerCallback):
             self.last_reported_step = state.global_step
             
             if self.trial.should_prune():
-                print(f"⏹️ Optuna Pruning: Trial {self.trial.number} early stopping")
+                print(f"⏹️ Optuna Pruning: Trial {self.trial.number} pruned")
                 control.should_training_stop = True
                 if OPTUNA_AVAILABLE:
                     raise optuna.exceptions.TrialPruned()
 
 
 def objective(trial, train_df, feature_cols):
-    """v11_2 compatible Optuna Objective function (Holdout validation)"""
+    """Optuna objective (holdout validation), v11_2 compatible."""
     trial_start_time = time.time()
     
-    print(f"\n🔄 Trial {trial.number} started... (Memory: {monitor_memory_usage():.1f}MB)")
+    print(f"\n🔄 Trial {trial.number} starting... (memory: {monitor_memory_usage():.1f}MB)")
     
     # Memory check
     if check_memory_limit():
-        print(f"⏹️ Trial {trial.number} early stopping (Memory insufficient)")
+        print(f"⏹️ Trial {trial.number} pruned (memory limit)")
         if OPTUNA_AVAILABLE:
             raise optuna.exceptions.TrialPruned()
         else:
             return 0.0
     
-    # Get hyperparameters from config
+    # Get hyperparameter space from config
     params = OPTUNA_PARAM_SPACE
     
-    # Set hyperparameters
+    # Hyperparameter definitions
     patch_len = trial.suggest_categorical("patch_len", params["patch_len"])
     window_size = trial.suggest_categorical("window_size", params["window_size"])
     stride = trial.suggest_categorical("stride", params["stride"])
     
-    # Pruning condition check
+    # Early pruning constraints
     if (
         window_size <= patch_len
         or stride > patch_len
@@ -135,7 +168,7 @@ def objective(trial, train_df, feature_cols):
         or stride > window_size // 4
         or patch_len > window_size // 2
     ):
-        print(f"⏹️ Trial {trial.number} early stopping (Parameter conditions)")
+        print(f"⏹️ Trial {trial.number} pruned (parameter constraints)")
         if OPTUNA_AVAILABLE:
             raise optuna.exceptions.TrialPruned()
         else:
@@ -145,7 +178,7 @@ def objective(trial, train_df, feature_cols):
     d_model = trial.suggest_categorical("d_model", params["d_model"])
     mlp_mult = trial.suggest_categorical("mlp_hidden_mult", params["mlp_hidden_mult"])
     
-    # Range-type parameters
+    # Ranged parameters
     dropout_spec = params["dropout_mlp"]
     dropout = trial.suggest_float("dropout_mlp", dropout_spec["min"], dropout_spec["max"])
     
@@ -155,60 +188,45 @@ def objective(trial, train_df, feature_cols):
     wd_spec = params["weight_decay"]
     weight_decay = trial.suggest_float("weight_decay", wd_spec["min"], wd_spec["max"])
     
-    threshold_spec = params["classification_threshold"]
-    threshold = trial.suggest_float("classification_threshold", threshold_spec["min"], threshold_spec["max"])
+    threshold = 0.5  # fixed threshold
     
     # Categorical parameters
     activation = trial.suggest_categorical("activation", params["activation"])
     pooling_type = trial.suggest_categorical("pooling_type", params["pooling_type"])
     loss_type = trial.suggest_categorical("loss_type", params["loss_type"])
     
-    # Focal loss parameters
+    # Focal loss parameter
     if loss_type == "focal":
         gamma_spec = params["focal_gamma"]
         focal_gamma = trial.suggest_float("focal_gamma", gamma_spec["min"], gamma_spec["max"])
     else:
         focal_gamma = None
     
-    # Fixed values
+    # Constants
     num_layers = params["num_layers"]
     num_heads = params["num_heads"]
     batch_size = params["batch_size"]
     
     try:
-        # Apply v11_2 Rolling CV
+        # Apply rolling CV (v11_2 style)
         from data.preprocess import split_by_time_gap, batch_sequence_processing
         
-        # Use entire train_df for Rolling CV
+        # Use entire train_df for rolling CV
         combined_split_data = split_by_time_gap(train_df, max_gap_hours=24)
         combined_sequences = batch_sequence_processing(combined_split_data, window_size)
         
         if not combined_sequences:
-            print("⚠️ Sequence generation failed")
+            print("⚠️ Failed to generate sequences")
             if OPTUNA_AVAILABLE:
                 raise optuna.exceptions.TrialPruned()
             else:
                 return 0.0
         
-        # Scaling (60% of entire sequences)
-        scaler = StandardScaler()
-        base_sequences = combined_sequences[:int(len(combined_sequences) * 0.6)]
-        
-        for seq in base_sequences:
-            scaler.partial_fit(seq[feature_cols])
-        
-        # Apply scaling to all sequences
-        scaled_sequences = []
-        for seq in combined_sequences:
-            seq_scaled = seq.copy()
-            seq_scaled[feature_cols] = scaler.transform(seq[feature_cols])
-            scaled_sequences.append(seq_scaled)
-        
-        # Rolling Window CV split
-        cv_folds = rolling_window_cv_split(scaled_sequences)
+        # Rolling Window CV split (original sequences)
+        cv_folds = rolling_window_cv_split(combined_sequences)
         
         if not cv_folds:
-            print("⚠️ CV fold generation failed")
+            print("⚠️ Failed to create CV folds")
             if OPTUNA_AVAILABLE:
                 raise optuna.exceptions.TrialPruned()
             else:
@@ -216,20 +234,37 @@ def objective(trial, train_df, feature_cols):
         
         cv_scores = []
         
-        # Evaluate from back folds (latest data first)
+        # Evaluate from the latest folds first
         for fold_idx, fold_data in enumerate(reversed(cv_folds)):
             train_sequences = fold_data['train']
             val_sequences = fold_data['validation']
             
-            # Dataset creation
-            train_dataset = CoinTimeSeriesDataset(train_sequences, feature_cols)
-            val_dataset = CoinTimeSeriesDataset(val_sequences, feature_cols)
+            # Cache scaler per fold and apply
+            fold_scaler = get_cached_fold_scaler(window_size, fold_idx, train_sequences, feature_cols)
+            
+            # Apply scaling to train sequences
+            train_sequences_scaled = []
+            for seq in train_sequences:
+                seq_scaled = seq.copy()
+                seq_scaled[feature_cols] = fold_scaler.transform(seq[feature_cols])
+                train_sequences_scaled.append(seq_scaled)
+            
+            # Apply scaling to validation sequences
+            val_sequences_scaled = []
+            for seq in val_sequences:
+                seq_scaled = seq.copy()
+                seq_scaled[feature_cols] = fold_scaler.transform(seq[feature_cols])
+                val_sequences_scaled.append(seq_scaled)
+            
+            # Create datasets (scaled sequences)
+            train_dataset = CoinTimeSeriesDataset(train_sequences_scaled, feature_cols)
+            val_dataset = CoinTimeSeriesDataset(val_sequences_scaled, feature_cols)
             
             if len(train_dataset) == 0 or len(val_dataset) == 0:
                 continue
 
-            # Model creation (newly created for each fold)
-            model = PatchTST(
+            # Create model (new per fold)
+            model = PatchSequenceModel(
                 input_size=len(feature_cols),
                 d_model=d_model,
                 num_layers=num_layers,
@@ -246,16 +281,16 @@ def objective(trial, train_df, feature_cols):
 
             # Training Arguments
             training_args = TrainingArguments(
-                output_dir=f"./tmp_trial_{trial.number}_fold_{fold_idx}",
+            output_dir=f"./tmp_trial_{trial.number}_fold_{fold_idx}",
                 per_device_train_batch_size=batch_size,
                 per_device_eval_batch_size=32,
-                eval_strategy="epoch",
+            eval_strategy="epoch",
                 save_strategy="no",
                 num_train_epochs=50,
                 learning_rate=learning_rate,
                 weight_decay=weight_decay,
-                logging_steps=999999,
-                disable_tqdm=True,
+            logging_steps=999999,  # suppressed by design
+            disable_tqdm=True,
                 report_to=[],
                 logging_dir=None,
                 log_level="error",
@@ -291,7 +326,7 @@ def objective(trial, train_df, feature_cols):
                         "eval_weighted_recall": 0.0
                     }
 
-            # Pruning callback (only for the first fold)
+            # Pruning callback (first fold only)
             callbacks = [OptunaPruningCallback(trial)] if fold_idx == 0 else []
             
             trainer = Trainer(
@@ -303,11 +338,11 @@ def objective(trial, train_df, feature_cols):
                 callbacks=callbacks
             )
 
-            # Focal Loss setting
+            # Set FocalLoss if selected
             model.focal_loss = FocalLoss(gamma=focal_gamma) if loss_type == "focal" else None
             
             try:
-                # Train (output suppression)
+                # Train (suppress verbose output)
                 import sys
                 from io import StringIO
                 
@@ -333,7 +368,7 @@ def objective(trial, train_df, feature_cols):
                 print(f" Fold{fold_idx+1}=Error", end="")
                 continue
             finally:
-                # Memory cleanup per fold
+                # Cleanup per fold
                 try:
                     del model, trainer, train_dataset, val_dataset
                     safe_memory_cleanup()
@@ -346,11 +381,11 @@ def objective(trial, train_df, feature_cols):
             else:
                 return 0.0
         
-        # Calculate average F1
+        # Compute mean F1
         mean_f1 = np.mean([score["eval_weighted_f1"] for score in cv_scores])
         total_time = time.time() - trial_start_time
         
-        print(f" → CV_F1={mean_f1:.3f} | Time={total_time:.0f}s")
+        print(f" → CV_F1={mean_f1:.3f} | time={total_time:.0f}s")
         
         return mean_f1
         
@@ -360,14 +395,14 @@ def objective(trial, train_df, feature_cols):
         print(f"⚠️ Trial {trial.number} error: {type(e).__name__}")
         return 0.0
     finally:
-        # Memory cleanup (already cleaned up in CV)
+        # Memory cleanup (also happens per fold)
         safe_memory_cleanup()
 
 
 def create_optuna_study(n_trials: int = 20):
-    """Create and run Optuna Study"""
+    """Create and return an Optuna Study."""
     if not OPTUNA_AVAILABLE:
-        print("❌ Optuna not installed. Skipping hyperparameter tuning.")
+        print("❌ Optuna not installed; skipping hyperparameter tuning.")
         return None
     
     study = optuna.create_study(
@@ -379,13 +414,13 @@ def create_optuna_study(n_trials: int = 20):
 
 
 def safe_model_save(model, path, model_args):
-    """v11_2 compatible safe model saving"""
+    """Safely save model (v11_2 compatible format)."""
     try:
-        # Memory cleanup before saving
+        # Cleanup before saving
         safe_memory_cleanup()
         
         torch.save({
-            'model_class': 'PatchTST',
+            'model_class': 'PatchSequenceModel',
             'model_args': model_args,
             'state_dict': model.state_dict()
         }, path)
@@ -393,22 +428,22 @@ def safe_model_save(model, path, model_args):
         print(f"✅ Model saved: {path}")
         
     except Exception as e:
-        print(f"❌ Model saving failed: {e}")
+        print(f"❌ Model save failed: {e}")
         # Try backup path
         backup_path = path.replace('.pt', '_backup.pt')
         try:
             torch.save({
-                'model_class': 'PatchTST',
+                'model_class': 'PatchSequenceModel',
                 'model_args': model_args,
                 'state_dict': model.state_dict()
             }, backup_path)
             print(f"✅ Backup model saved: {backup_path}")
         except Exception as backup_error:
-            print(f"❌ Backup saving also failed: {backup_error}")
+            print(f"❌ Backup save failed: {backup_error}")
 
 
 def load_and_preprocess_data(feature_cols, test_days=10):
-    """Load and preprocess data (backward compatibility)"""
+    """Load and preprocess data (legacy compatibility)."""
     from data.supabase_io import load_technical_indicators
     from datetime import timedelta
     
@@ -416,7 +451,7 @@ def load_and_preprocess_data(feature_cols, test_days=10):
     
     # Memory check
     if check_memory_limit():
-        print("⚠️ Data loading interrupted due to insufficient memory")
+        print("⚠️ Aborting due to insufficient memory")
         return None, None
     
     try:
@@ -428,16 +463,16 @@ def load_and_preprocess_data(feature_cols, test_days=10):
         df = df[df['price_trend'].isin(['up', 'down'])].copy()
         df['label'] = (df['price_trend'] == 'up').astype(int)
         
-        # Train/test split
+        # Train/Test split
         max_ts = df['timestamp'].max()
         test_cutoff = max_ts - timedelta(days=test_days)
         
         train_df = df[df['timestamp'] < test_cutoff].copy()
         test_df = df[df['timestamp'] >= test_cutoff].copy()
         
-        print(f"✅ Data preprocessing complete!")
-        print(f"  - Training data: {len(train_df):,}")
-        print(f"  - Test data: {len(test_df):,}")
+        print(f"✅ Preprocessing complete!")
+        print(f"  - train: {len(train_df):,}")
+        print(f"  - test: {len(test_df):,}")
         
         return train_df, test_df
         

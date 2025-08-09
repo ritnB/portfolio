@@ -2,12 +2,12 @@ FROM python:3.10-slim
 
 WORKDIR /app
 
-# Install Python packages
+# Install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy all code
+# Copy code
 COPY . .
 
-# Flask + gunicorn entrypoint
+# Entrypoint (Flask + gunicorn)
 CMD ["gunicorn", "--timeout", "3600", "--bind", "0.0.0.0:8080", "app:app"]

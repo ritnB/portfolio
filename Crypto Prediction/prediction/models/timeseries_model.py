@@ -1,11 +1,10 @@
-# models/timeseries_model.py
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# 🧨 FocalLoss 정의 (CrossEntropy 대체용)
+
 class FocalLoss(nn.Module):
+    """Focal Loss as a replacement for CrossEntropy for imbalanced data."""
     def __init__(self, gamma=2.0, reduction='mean'):
         super().__init__()
         self.gamma = gamma
@@ -22,8 +21,8 @@ class FocalLoss(nn.Module):
             return focal_loss.sum()
         return focal_loss
 
-# 🧠 PatchTST with CLS or Mean Pooling
-class PatchTST(nn.Module):
+class PatchSequenceModel(nn.Module):
+    """Generic patch-based Transformer for sequence classification."""
     def __init__(self, input_size, d_model, num_layers, num_heads,
                  patch_size, window_size, num_classes,
                  dropout=0.0, pooling_type='cls', mlp_hidden_mult=2,
@@ -32,7 +31,7 @@ class PatchTST(nn.Module):
         super().__init__()
 
         self.patch_size = patch_size
-        self.stride = stride if stride is not None else patch_size  # 사용자가 설정 안 하면 기본은 patch_size
+        self.stride = stride if stride is not None else patch_size  # default to patch_size
         self.pooling_type = pooling_type.lower()
 
         assert window_size >= patch_size, "window_size must be >= patch_size"
@@ -78,29 +77,29 @@ class PatchTST(nn.Module):
         )
 
         self.ce_loss = nn.CrossEntropyLoss()
-        self.focal_loss = None  # 외부에서 설정 가능
+        self.focal_loss = None  # can be set externally
 
     def forward(self, x, labels=None):
         B, W, D = x.shape
         P = self.patch_size
         S = self.stride
 
-        # ① 슬라이딩 패치 생성: (B, num_patches, patch_size * D)
+        # ① Create sliding patches: (B, num_patches, patch_size * D)
         x = x.unfold(dimension=1, size=P, step=S)
         x = x.contiguous().view(B, -1, P * D)
 
         # ② Linear projection
         x = self.input_proj(x)
 
-        # ③ CLS token 삽입 (선택)
+        # ③ Optionally insert CLS token
         if self.pooling_type == 'cls':
             cls_token = self.cls_token.expand(B, -1, -1)
             x = torch.cat([cls_token, x], dim=1)
 
-        # ④ 포지션 임베딩 추가
+        # ④ Add positional embedding
         x = x + self.pos_embedding[:, :x.size(1), :]
 
-        # ⑤ Transformer 인코더 통과
+        # ⑤ Transformer encoder
         x = self.transformer(x)
 
         # ⑥ Pooling
@@ -123,20 +122,33 @@ class PatchTST(nn.Module):
         return {"logits": logits}
 
 def load_model_from_checkpoint(path: str, return_args: bool = False):
-    """
-    저장된 모델 체크포인트에서 PatchTST 모델을 로드합니다.
+    """Load PatchTST model from a checkpoint (v11_4 compatible).
 
     Args:
-        path (str): .pt 파일 경로
-        return_args (bool): True시 (model, model_args) 튜플 반환
+        path (str): checkpoint path (.pt)
+        return_args (bool): if True, return (model, model_args)
 
     Returns:
-        PatchTST 모델 인스턴스 또는 (model, model_args) 튜플
+        PatchTST model instance or (model, model_args)
     """
     checkpoint = torch.load(path, map_location=torch.device("cpu"))
     model_args = checkpoint["model_args"]
     
-    # PatchTST 생성자에서 허용하는 파라미터만 필터링
+    # v11_4 compatibility: patch_len -> patch_size
+    if 'patch_len' in model_args and 'patch_size' not in model_args:
+        model_args['patch_size'] = model_args['patch_len']
+    
+    # v11_4 compatibility: dropout_mlp -> dropout
+    if 'dropout_mlp' in model_args and 'dropout' not in model_args:
+        model_args['dropout'] = model_args['dropout_mlp']
+    
+    # Defaults for parameters added in v11_4
+    model_args.setdefault('pooling_type', 'cls')
+    model_args.setdefault('activation', 'relu')
+    model_args.setdefault('mlp_hidden_mult', 2)
+    model_args.setdefault('stride', model_args.get('patch_size', 16))
+    
+    # Filter to constructor-supported args
     valid_params = {
         'input_size', 'd_model', 'num_layers', 'num_heads', 
         'patch_size', 'window_size', 'num_classes', 'dropout', 
@@ -144,12 +156,12 @@ def load_model_from_checkpoint(path: str, return_args: bool = False):
     }
     filtered_args = {k: v for k, v in model_args.items() if k in valid_params}
     
-    model = PatchTST(**filtered_args)
+    model = PatchSequenceModel(**filtered_args)
     model.load_state_dict(checkpoint["state_dict"])
     
     if return_args:
-        return model, model_args  # 원본 model_args 반환 (v11_2 설정값 포함)
+        return model, model_args  # return original model_args (includes v11_4 settings)
     return model
 
-def load_model(**model_args) -> PatchTST:
-    return PatchTST(**model_args)
+def load_model(**model_args) -> PatchSequenceModel:
+    return PatchSequenceModel(**model_args)

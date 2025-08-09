@@ -16,7 +16,7 @@ from utils.timestamp_utils import safe_parse_timestampz, safe_parse_timestamp_se
 client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # ============================
-# 🔹 Save prediction results
+# 🔹 Prediction I/O
 # ============================
 def load_recent_predictions(table_name="predictions", limit=100):
     try:
@@ -26,7 +26,7 @@ def load_recent_predictions(table_name="predictions", limit=100):
             .limit(limit)\
             .execute()
         data = response.__dict__.get("data", [])
-        # For duplicate check, store as {(coin, timestamp_str): True}
+        # Cache for duplicate check: {(coin, timestamp_str): True}
         cached = {(r['coin'], r['timestamp']): True for r in data}
         return cached
     except Exception as e:
@@ -40,10 +40,10 @@ def save_prediction(data: dict, cached: dict, table_name="predictions"):
         return None
     try:
         response = client.table(table_name).insert(data).execute()
-        cached[key] = True  # Add newly saved item to cache
+        cached[key] = True  # update cache
         print(f"[✅] Saved prediction for {key}")
         
-        # Return the ID of the inserted record
+        # Return inserted row id when available
         inserted_data = response.data
         if inserted_data and len(inserted_data) > 0:
             return inserted_data[0].get('id')
@@ -53,13 +53,13 @@ def save_prediction(data: dict, cached: dict, table_name="predictions"):
         return None
 
 # ============================
-# 🔹 Load technical indicators (paging)
+# 🔹 Technical indicators loader (paged)
 # ============================
 def load_technical_indicators(for_training: bool = False) -> pd.DataFrame:
-    """Load technical indicator data compatible with timestampz
-    
+    """Load technical indicators with timestampz handling.
+
     Args:
-        for_training (bool): If True, for retrain (100 days), if False, for inference (4 days)
+        for_training (bool): True → retrain horizon, False → inference horizon
     """
     recent_days = RECENT_DAYS_RETRAIN if for_training else RECENT_DAYS_INFERENCE
     start_datetime = normalize_timestamp_for_query(
@@ -94,30 +94,30 @@ def load_technical_indicators(for_training: bool = False) -> pd.DataFrame:
         return pd.DataFrame()
 
     df = pd.DataFrame(all_data)
-    print(f"[✅] Loaded {len(all_data):,} technical indicator data")
+    print(f"[✅] Loaded {len(all_data):,} technical indicator records")
     
-    # ✅ v11_2 compatible timestampz processing
+    # v11_2 compatible timestampz handling
     df["timestamp"] = safe_parse_timestamp_series(df["timestamp"])
     
-    # Apply coin name normalization
+    # Normalize coin names
     df["coin"] = df["coin"].apply(normalize_coin_name)
     unique_coins = df['coin'].nunique()
     print(f"[🔄] Coin name normalization complete. Unique coins: {unique_coins}")
     
-    # Data quality check
+    # Data quality checks
     null_timestamps = df['timestamp'].isnull().sum()
     if null_timestamps > 0:
-        print(f"[⚠️] {null_timestamps} timestamp parsing failed - removed")
+        print(f"[⚠️] {null_timestamps} timestamp parse failures - dropping rows")
         df = df.dropna(subset=['timestamp'])
     
-    print(f"[✅] Final data: {len(df):,} records, {unique_coins} coins")
+    print(f"[✅] Final data: {len(df):,} records across {unique_coins} coins")
     return df
 
 # ============================
-# 🔸 Calculate reference time
+# 🔸 Threshold time helpers
 # ============================
 def get_recent_threshold(table: str) -> str:
-    """Calculate reference time compatible with timestampz"""
+    """Compute threshold timestamp (timestampz compatible)."""
     latest_response = client.table(table)\
         .select("timestamp")\
         .order("timestamp", desc=True)\
@@ -128,7 +128,7 @@ def get_recent_threshold(table: str) -> str:
     if not data:
         raise Exception(f"Supabase error retrieving latest timestamp from {table}")
 
-    # Safe timestampz processing
+    # timestampz safe handling
     timestamp_raw = data[0]['timestamp']
     latest_ts = safe_parse_timestampz(timestamp_raw)
     
@@ -136,55 +136,56 @@ def get_recent_threshold(table: str) -> str:
     return normalize_timestamp_for_query(threshold)
 
 # ============================
-# 🔹 Update price information
+# 🔹 Price updates
 # ============================
 def update_prediction_prices(prediction_ids: list, coin_names: list, price_data: dict, table_name="predictions"):
     """
-    Batch update price information for prediction records.
+    Batch update price information for predictions.
     
     Args:
-        prediction_ids: List of prediction record IDs to update
-        coin_names: List of coin names (same order as prediction_ids)
-        price_data: Price data from CoinGecko API
-        table_name: Table name
+        prediction_ids: list of prediction row IDs
+        coin_names: list of coin names (aligned with prediction_ids)
+        price_data: price payload from CoinGecko API
+        table_name: target table name
     """
     from utils.price_utils import format_price_update_data
     
     if not prediction_ids or not coin_names:
-        print("⚠️ No prediction data to update.")
+        print("⚠️ No predictions to update.")
         return
     
-    print(f"💰 Starting price information update: {len(prediction_ids)} predictions")
+    print(f"💰 Starting price updates for {len(prediction_ids)} predictions")
     
     updated_count = 0
     failed_count = 0
     
     for pred_id, coin_name in zip(prediction_ids, coin_names):
         if pred_id is None:
-            print(f"⚠️ {coin_name}: No prediction ID, skipping price update")
+            print(f"⚠️ {coin_name}: missing prediction ID; skipping")
             failed_count += 1
             continue
             
-        # Format price data
+        # Format price payload
         price_update = format_price_update_data(coin_name, price_data)
         
         if not price_update:
-            print(f"⚠️ {coin_name}: No price information")
+            print(f"⚠️ {coin_name}: no price information")
             failed_count += 1
             continue
         
         try:
             # Supabase update
             client.table(table_name).update(price_update).eq('id', pred_id).execute()
+            
             from config import PRICE_USD_COLUMN
-            print(f"✅ {coin_name}: Price update complete (${price_update[PRICE_USD_COLUMN]})")
+            print(f"✅ {coin_name}: price updated (${price_update[PRICE_USD_COLUMN]})")
             updated_count += 1
             
         except Exception as e:
-            print(f"❌ {coin_name}: Price update failed - {e}")
+            print(f"❌ {coin_name}: price update failed - {e}")
             failed_count += 1
     
-    print(f"💰 Price update complete: {updated_count} succeeded, {failed_count} failed")
+    print(f"💰 Price updates completed: success {updated_count}, failed {failed_count}")
     
     return {
         'updated': updated_count,
@@ -195,11 +196,11 @@ def update_prediction_prices(prediction_ids: list, coin_names: list, price_data:
 
 def get_predictions_without_price(hours_back=24, table_name="predictions") -> pd.DataFrame:
     """
-    Query recent predictions without price information.
+    Retrieve recent predictions that do not have price information.
     
     Args:
-        hours_back: How many hours back to query predictions
-        table_name: Table name
+        hours_back: look back window in hours
+        table_name: table name
     
     Returns:
         DataFrame of predictions without price information
@@ -220,9 +221,9 @@ def get_predictions_without_price(hours_back=24, table_name="predictions") -> pd
             return pd.DataFrame()
         
         df = pd.DataFrame(data)
-        print(f"🔍 Found {len(df)} predictions without price information")
+        print(f"🔍 Found {len(df)} predictions without price info")
         return df
         
     except Exception as e:
-        print(f"❌ Failed to query predictions without price information: {e}")
+        print(f"❌ Failed to fetch predictions without price: {e}")
         return pd.DataFrame()

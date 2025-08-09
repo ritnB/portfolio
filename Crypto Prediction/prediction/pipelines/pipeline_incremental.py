@@ -1,5 +1,3 @@
-# pipeline_incremental.py
-
 import os
 from datetime import datetime, timedelta
 import torch
@@ -12,55 +10,60 @@ from sklearn.metrics import f1_score
 
 from models.timeseries_model import load_model_from_checkpoint
 from data.supabase_io import load_technical_indicators
-from data.preprocess import AssetTimeSeriesDataset, split_by_time_gap, batch_sequence_processing
-from utils.gcs_utils import upload_to_gcs, download_latest_model_and_scaler, verify_model_compatibility
+from data.preprocess import CoinTimeSeriesDataset, split_by_time_gap, batch_sequence_processing
+from utils.gcs_utils import upload_to_gcs, download_latest_model_and_scaler, verify_v11_2_model_compatibility
 from utils.memory_utils import safe_memory_cleanup, monitor_memory_usage, check_memory_limit
-from config import (GCS_BUCKET_NAME, GCS_MODEL_DIR, FEATURE_COLS,
-                   INCREMENTAL_DAYS, INCREMENTAL_EPOCHS, INCREMENTAL_LR, INCREMENTAL_BATCH_SIZE,
-                   INCREMENTAL_PERFORMANCE_THRESHOLD)
+from config import (
+    GCS_BUCKET_NAME,
+    GCS_MODEL_DIR,
+    FEATURE_COLS,
+    INCREMENTAL_DAYS,
+    INCREMENTAL_EPOCHS,
+    INCREMENTAL_LR,
+    INCREMENTAL_BATCH_SIZE,
+    INCREMENTAL_PERFORMANCE_THRESHOLD,
+    INCREMENTAL_VALIDATION_RATIO,
+    INCREMENTAL_MAX_DEGRADATION,
+    INCREMENTAL_MIN_IMPROVEMENT,
+)
 
-# Incremental learning safety settings (anonymized)
-INCREMENTAL_VALIDATION_RATIO = 0.2        # Validation data ratio
-INCREMENTAL_MAX_DEGRADATION = 0.05        # Maximum performance degradation allowance
-INCREMENTAL_MIN_IMPROVEMENT = 0.01        # Minimum performance improvement requirement
+# Incremental learning safeguards are configured in config.py
 
 def load_model_and_scaler():
-    """Load latest model and scaler from Cloud Storage"""
-    print("🔄 Downloading compatible model from Cloud Storage...")
+    """Download latest model and scaler from GCS (v11_2 compatible)."""
+    print("🔄 Downloading v11_2-compatible model from GCS...")
     
-    # Temporary file paths
+    # Temporary paths
     model_path = "/tmp/current_model.pt"
     scaler_path = "/tmp/current_scaler.pkl"
     
-    # Download compatible model/scaler and check integrity
+    # Download and verify compatibility
     model_success, scaler_success = download_latest_model_and_scaler(
         GCS_BUCKET_NAME, model_path, scaler_path
     )
     
     if not model_success:
-        raise Exception("Compatible model not found in Cloud Storage.")
+        raise Exception("Could not find a v11_2-compatible model in GCS.")
     
     if not scaler_success:
-        raise Exception("Compatible scaler not found in Cloud Storage.")
+        raise Exception("Could not find a v11_2-compatible scaler in GCS.")
     
-    print("✅ Compatible model and scaler loaded successfully")
+    print("✅ Loaded v11_2-compatible model and scaler")
     return model_path, scaler_path
 
 def load_incremental_data():
-    """Load recent data for incremental learning"""
+    """Load recent data for incremental learning (v11_2 compatible)."""
     try:
-        # Load recent data for incremental learning
+        print(f"🔄 Loading last {INCREMENTAL_DAYS} days of data...")
         
-        print(f"🔄 Loading recent {INCREMENTAL_DAYS} days of data...")
-        
-        # Load compatible data (including trained timestampz processing)
+        # Load data with timestampz handling
         df = load_technical_indicators(for_training=True)
         
         if df.empty:
             print("⚠️ No data available for incremental learning")
             return df
         
-        # Compatible preprocessing
+        # Preprocessing
         df = df.dropna()
         df = df[df['price_trend'].isin(['up', 'down'])].copy()
         df['label'] = df['price_trend'].map({'down': 0, 'up': 1})
@@ -69,11 +72,10 @@ def load_incremental_data():
         return df
         
     finally:
-        # Incremental learning completed
         pass
 
 def evaluate_model_performance(model, test_data, scaler, window_size):
-    """Evaluate compatible model performance"""
+    """Evaluate model performance (v11_2 compatible)."""
     if test_data.empty:
         return 0.0
     
@@ -81,7 +83,7 @@ def evaluate_model_performance(model, test_data, scaler, window_size):
     model.to(device)
     model.eval()
     
-    # Compatible sequence generation
+    # Generate sequences (v11_2 style)
     split_data = split_by_time_gap(test_data, max_gap_hours=24)
     sequences = batch_sequence_processing(split_data, window_size)
     
@@ -95,8 +97,8 @@ def evaluate_model_performance(model, test_data, scaler, window_size):
         seq_scaled[FEATURE_COLS] = scaler.transform(seq[FEATURE_COLS])
         scaled_sequences.append(seq_scaled)
     
-    # Create compatible dataset
-    dataset = AssetTimeSeriesDataset(scaled_sequences, FEATURE_COLS)
+    # Create dataset (v11_2 compatible)
+    dataset = CoinTimeSeriesDataset(scaled_sequences, FEATURE_COLS)
     if len(dataset) == 0:
         return 0.0
     
@@ -122,43 +124,43 @@ def evaluate_model_performance(model, test_data, scaler, window_size):
     return f1_score(all_labels, all_preds, average="weighted")
 
 def incremental_update_with_validation(model, new_data, scaler, window_size):
-    """Update model with validation included"""
+    """Incremental model update with validation (v11_2 compatible)."""
     if new_data.empty:
         return model, scaler, False
     
-    print(f"🔄 Starting incremental learning (Memory: {monitor_memory_usage():.1f}MB)")
+    print(f"🔄 Starting incremental learning (v11_2 compatible) (memory: {monitor_memory_usage():.1f}MB)")
     
     # Memory check
     if check_memory_limit():
-        print("⚠️ Incremental learning aborted due to insufficient memory.")
+        print("⚠️ Insufficient memory; aborting incremental learning")
         return model, scaler, False
     
-    # Data splitting (train/validation)
+    # Split into train/validation
     split_idx = int(len(new_data) * (1 - INCREMENTAL_VALIDATION_RATIO))
     train_data = new_data.iloc[:split_idx]
     val_data = new_data.iloc[split_idx:]
     
     if train_data.empty or val_data.empty:
-        print("⚠️ Insufficient data for incremental learning.")
+        print("⚠️ Not enough data; aborting incremental learning")
         return model, scaler, False
     
-    print(f"  - Training data: {len(train_data):,}")
-    print(f"  - Validation data: {len(val_data):,}")
+    print(f"  - train samples: {len(train_data):,}")
+    print(f"  - validation samples: {len(val_data):,}")
     
-    # Measure original model performance
+    # Baseline performance
     original_performance = evaluate_model_performance(model, val_data, scaler, window_size)
-    print(f"  - Original model performance: {original_performance:.4f}")
+    print(f"  - original performance: {original_performance:.4f}")
     
-    # Performance threshold check
+    # Threshold check
     if original_performance < INCREMENTAL_PERFORMANCE_THRESHOLD:
-        print(f"⚠️ Original model performance below threshold ({INCREMENTAL_PERFORMANCE_THRESHOLD})")
+        print(f"⚠️ original performance below threshold ({INCREMENTAL_PERFORMANCE_THRESHOLD})")
         return model, scaler, False
     
-    # Device setting
+    # Device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
     
-    # Prepare compatible data
+    # Prepare data (v11_2 style)
     train_split_data = split_by_time_gap(train_data, max_gap_hours=24)
     train_sequences = batch_sequence_processing(train_split_data, window_size)
     
@@ -173,13 +175,13 @@ def incremental_update_with_validation(model, new_data, scaler, window_size):
         seq_scaled[FEATURE_COLS] = scaler.transform(seq[FEATURE_COLS])
         scaled_train_sequences.append(seq_scaled)
     
-    # Create compatible dataset
-    dataset = AssetTimeSeriesDataset(scaled_train_sequences, FEATURE_COLS)
+    # Create dataset (v11_2 compatible)
+    dataset = CoinTimeSeriesDataset(scaled_train_sequences, FEATURE_COLS)
     if len(dataset) == 0:
         print("⚠️ Failed to create dataset")
         return model, scaler, False
     
-    print(f"  - Training samples: {len(dataset):,}")
+    print(f"  - train samples: {len(dataset):,}")
     
     # Incremental learning
     model.train()
@@ -203,19 +205,19 @@ def incremental_update_with_validation(model, new_data, scaler, window_size):
         avg_loss = total_loss / len(dataloader)
         print(f"    Epoch {epoch+1}/{INCREMENTAL_EPOCHS}: Loss {avg_loss:.4f}")
         
-        # Memory cleanup
+        # Cleanup
         if (epoch + 1) % 2 == 0:
             safe_memory_cleanup()
     
-    # Measure updated model performance
+    # Evaluate updated model performance
     updated_performance = evaluate_model_performance(model, val_data, scaler, window_size)
-    print(f"  - Updated model performance: {updated_performance:.4f}")
+    print(f"  - updated performance: {updated_performance:.4f}")
     
-    # Performance verification
+    # Validation
     performance_improvement = updated_performance - original_performance
-    print(f"  - Performance change: {performance_improvement:+.4f}")
+    print(f"  - performance delta: {performance_improvement:+.4f}")
     
-    # Validation conditions
+    # Checks
     if updated_performance < INCREMENTAL_PERFORMANCE_THRESHOLD:
         print(f"⚠️ Performance below threshold: {updated_performance:.4f}")
         return model, scaler, False
@@ -225,19 +227,19 @@ def incremental_update_with_validation(model, new_data, scaler, window_size):
         return model, scaler, False
     
     if performance_improvement < INCREMENTAL_MIN_IMPROVEMENT:
-        print(f"⚠️ Performance improvement too small: {performance_improvement:.4f}")
+        print(f"⚠️ Insufficient improvement: {performance_improvement:.4f}")
         return model, scaler, False
     
-    print(f"✅ Incremental learning successful: {original_performance:.4f} → {updated_performance:.4f}")
+    print(f"✅ Incremental learning success: {original_performance:.4f} → {updated_performance:.4f}")
     return model, scaler, True
 
 def run_incremental_learning():
-    """Run the incremental learning pipeline"""
-    print("=== [🔄] Incremental Learning Pipeline Starting ===")
+    """Run incremental learning pipeline (v11_2 compatible)."""
+    print("=== [🔄] Incremental Learning Pipeline (v11_2 compatible) Starting ===")
     print(f"📊 Initial memory: {monitor_memory_usage():.1f}MB")
     
     try:
-        # 1. Load current model and scaler (including compatible settings)
+        # 1. Load current model and scaler (v11_2 settings included)
         model_path, scaler_path = load_model_and_scaler()
         model, model_args = load_model_from_checkpoint(model_path, return_args=True)
         scaler = joblib.load(scaler_path)
@@ -252,37 +254,38 @@ def run_incremental_learning():
         
         # Memory check
         if check_memory_limit():
-            print("⚠️ Incremental learning aborted due to insufficient memory.")
+            print("⚠️ Insufficient memory; aborting incremental learning")
             return {"message": "Incremental learning aborted: insufficient memory."}, 200
         
         # 3. Update model
         window_size = model_args.get("window_size", 64)
+        threshold = model_args.get("classification_threshold", INCREMENTAL_PERFORMANCE_THRESHOLD)  # print only
         
         print(f"📊 Model settings:")
         print(f"  - window_size: {window_size}")
-        print(f"  - threshold: {model_args.get('classification_threshold', 0.5)}")
+        print(f"  - threshold: {threshold} (model_args or default)")
         
         updated_model, updated_scaler, success = incremental_update_with_validation(
             model, new_data, scaler, window_size
         )
         
         if not success:
-            print("❌ Incremental learning failed: performance validation failed.")
+            print("❌ Incremental learning failed: did not pass performance validation")
             safe_memory_cleanup()
-            return {"message": "Incremental learning failed: performance validation failed."}, 200
+            return {"message": "v11_2 incremental learning failed: performance validation failed."}, 200
         
         # 4. Save updated model
         today_str = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
         updated_model_path = f"/tmp/incremental_model_{today_str}.pt"
         updated_scaler_path = f"/tmp/incremental_scaler_{today_str}.pkl"
         
-        # Save model (preserve existing model_args)
+        # Save model with original model_args (v11_2)
         incremental_model_args = model_args.copy()
         incremental_model_args['training_type'] = 'incremental'
         incremental_model_args['incremental_timestamp'] = datetime.utcnow().isoformat()
         
         torch.save({
-            'model_class': 'PatchTST',
+            'model_class': 'PatchSequenceModel',
             'model_args': incremental_model_args,
             'state_dict': updated_model.state_dict()
         }, updated_model_path)
@@ -290,7 +293,7 @@ def run_incremental_learning():
         joblib.dump(updated_scaler, updated_scaler_path)
         
         # 5. Upload to GCS
-        model_name = f"patchtst_incremental_{today_str}.pt"
+        model_name = f"patchseq_incremental_{today_str}.pt"
         scaler_name = f"scaler_incremental_{today_str}.pkl"
         
         try:
@@ -300,11 +303,11 @@ def run_incremental_learning():
             print(f"✅ Incremental learning completed: {model_name}")
             print(f"📊 Final memory: {monitor_memory_usage():.1f}MB")
             
-            # Memory cleanup
+            # 메모리 정리
             safe_memory_cleanup()
             
             return {
-                "message": f"Incremental learning completed: {model_name}",
+                "message": f"v11_2 incremental learning completed: {model_name}",
                 "model_name": model_name
             }, 200
         except Exception as upload_error:
@@ -313,7 +316,7 @@ def run_incremental_learning():
         
     except Exception as e:
         print(f"[💥] Incremental learning failed: {e}")
-        # Memory cleanup on error
+        # Cleanup on error
         safe_memory_cleanup()
         return {"error": str(e)}, 500
 

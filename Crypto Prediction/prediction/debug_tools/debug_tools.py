@@ -1,18 +1,15 @@
-# debug/debug_tools.py
-
 from datetime import datetime, timedelta
 import pandas as pd
 
 
-def get_recent_date_range(recent_days=7):
+def get_recent_date_range(recent_days: int = 7):
+    """Return a list of recent dates in ascending order."""
     return [datetime.utcnow().date() - timedelta(days=i) for i in range(recent_days)][::-1]
 
 
-def print_technical_matrix(tech_df, recent_days=7):
-    """
-    Print technical indicator data existence by date
-    """
-    print("\n========== [📊 Technical Indicator Existence Matrix] ==========")
+def print_technical_matrix(tech_df: pd.DataFrame, recent_days: int = 7):
+    """Print a presence matrix of technical indicators by date and coin."""
+    print("\n========== [📊 Technical Indicator Presence Matrix] ==========")
     date_range = get_recent_date_range(recent_days)
     coins = sorted(tech_df["coin"].unique())
 
@@ -27,9 +24,9 @@ def print_technical_matrix(tech_df, recent_days=7):
     print("Legend: ✅ data exists | ❌ missing")
 
 
-def print_remaining_coins(merged_df):
-    print("\n========== [🔍 Remaining Coins Diagnosis] ==========")
+def print_remaining_coins(merged_df: pd.DataFrame):
+    print("\n========== [🔍 Remaining Coins] ==========")
     remaining_coins = sorted(merged_df["coin"].unique())
-    print(f"Number of remaining coins: {len(remaining_coins)}")
-    print(f"Coin list: {remaining_coins}")
-    print("===========================================")
+    print(f"Count: {len(remaining_coins)}")
+    print(f"Coins: {remaining_coins}")
+    print("=========================================")

@@ -1,36 +1,24 @@
-# pipeline_labeling.py
-
 from datetime import datetime, timedelta
 import os
 from supabase import create_client
 from dotenv import load_dotenv
-from config import normalize_asset_name
+from config import normalize_coin_name
 from utils.timestamp_utils import safe_parse_timestampz, normalize_timestamp_for_query
 
-# Load environment variables and create Database client
+# Load environment and create Supabase client
 load_dotenv()
 client = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
 
-LABELING_BATCH_SIZE = 1000  # Batch processing size
+LABELING_BATCH_SIZE = 1000  # batch size
 
-def normalize_asset_name_labeling(asset_name):
-    """
-    Normalize asset names (using normalize_asset_name function from config.py)
-    """
-    return normalize_asset_name(asset_name)
+
+def normalize_coin_name_labeling(coin_name):
+    """Normalize coin name using config.normalize_coin_name."""
+    return normalize_coin_name(coin_name)
+
 
 def get_unlabeled_records_paged(cutoff_time, batch_size=LABELING_BATCH_SIZE):
-    """
-    Get records where price_trend is NULL and before cutoff_time using paging
-    
-    Args:
-        cutoff_time: datetime object or ISO format string
-        batch_size: paging batch size
-    
-    Returns:
-        generator: returns data in batches
-    """
-    # Normalize cutoff_time to ISO format string
+    """Yield unlabeled records (price_trend is NULL) older than cutoff_time in pages."""
     if isinstance(cutoff_time, datetime):
         cutoff_time_str = cutoff_time.isoformat()
     else:
@@ -39,9 +27,8 @@ def get_unlabeled_records_paged(cutoff_time, batch_size=LABELING_BATCH_SIZE):
     offset = 0
     
     while True:
-        # Query records where price_trend is NULL and before cutoff_time
         resp = client.table("technical_indicators") \
-            .select("id, asset, feature_2, timestamp") \
+            .select("id, coin, ema, timestamp") \
             .is_("price_trend", "null") \
             .lte("timestamp", cutoff_time_str) \
             .order("id") \
@@ -55,64 +42,42 @@ def get_unlabeled_records_paged(cutoff_time, batch_size=LABELING_BATCH_SIZE):
         print(f"[📦] Loaded batch: {len(data)} records (offset: {offset})")
         yield data
         
-        # If fewer records than batch size, no more data
         if len(data) < batch_size:
             break
             
         offset += batch_size
 
-def find_future_feature(asset, timestamp, all_future_data):
-    """
-    Find specific indicator value 4 hours after a given time for a specific asset (with time range flexibility)
-    
-    Args:
-        asset: normalized asset name
-        timestamp: reference time
-        all_future_data: pre-loaded future data dictionary
-    
-    Returns:
-        float or None: indicator value 4 hours later
-    """
+
+def find_future_ema(coin, timestamp, all_future_data):
+    """Find EMA approximately 4 hours after the given timestamp for a coin."""
     target_time = timestamp + timedelta(hours=4)
     
-    # Time range setting (±2 hours buffer)
     time_buffer = timedelta(hours=2)
     search_start = target_time - time_buffer
     search_end = target_time + time_buffer
     
-    # Find closest data within range for the asset
-    asset_data = all_future_data.get(asset, [])
+    coin_data = all_future_data.get(coin, [])
     
     best_match = None
     min_diff = timedelta.max
     
-    for future_record in asset_data:
+    for future_record in coin_data:
         future_time = future_record['ts']
-        
-        # Check if within search range
         if search_start <= future_time <= search_end:
             diff = abs(future_time - target_time)
             if diff < min_diff:
                 min_diff = diff
-                best_match = future_record['feature_2']
-                print(f"[⏱️] Found future feature for {asset}: {future_time} (diff: {diff})")
+                best_match = future_record['ema']
+                print(f"[⏱️] Found future EMA for {coin}: {future_time} (diff: {diff})")
     
     if best_match is not None:
-        print(f"[✅] Best match for {asset}: {best_match} (target: {target_time}, actual: {target_time + min_diff if min_diff < timedelta.max else 'N/A'})")
+        print(f"[✅] Best match for {coin}: {best_match} (target: {target_time}, actual: {target_time + min_diff if min_diff < timedelta.max else 'N/A'})")
     
     return best_match
 
+
 def load_future_data_efficiently(min_timestamp):
-    """
-    Load future data efficiently (load only once)
-    
-    Args:
-        min_timestamp: datetime object or ISO format string
-    
-    Returns:
-        dict: organized future data by coin
-    """
-    # Normalize min_timestamp to ISO format string
+    """Load future EMA data efficiently (single pass)."""
     if isinstance(min_timestamp, datetime):
         min_timestamp_str = min_timestamp.isoformat()
     else:
@@ -126,10 +91,10 @@ def load_future_data_efficiently(min_timestamp):
     
     while True:
         resp = client.table("technical_indicators") \
-            .select("asset, feature_2, timestamp") \
+            .select("coin, ema, timestamp") \
             .gte("timestamp", min_timestamp_str) \
-            .not_.is_("feature_2", "null") \
-            .order("asset, timestamp") \
+            .not_.is_("ema", "null") \
+            .order("coin, timestamp") \
             .range(offset, offset + batch_size - 1) \
             .execute()
         
@@ -137,19 +102,18 @@ def load_future_data_efficiently(min_timestamp):
         if not data:
             break
         
-        # Organize data by coin
         for record in data:
             try:
-                normalized_asset = normalize_asset_name_labeling(record['asset'])
+                normalized_coin = normalize_coin_name_labeling(record['coin'])
                 ts = parse_timestamp_safe(record['timestamp'])
                 if ts is None:
                     continue
                 
-                if normalized_asset not in future_data:
-                    future_data[normalized_asset] = []
+                if normalized_coin not in future_data:
+                    future_data[normalized_coin] = []
                 
-                future_data[normalized_asset].append({
-                    'feature_2': float(record['feature_2']),
+                future_data[normalized_coin].append({
+                    'ema': float(record['ema']),
                     'ts': ts
                 })
             except Exception as e:
@@ -163,35 +127,26 @@ def load_future_data_efficiently(min_timestamp):
             
         offset += batch_size
     
-    # Sort data by timestamp for each coin
-    for asset in future_data:
-        future_data[asset].sort(key=lambda x: x['ts'])
+    for coin in future_data:
+        future_data[coin].sort(key=lambda x: x['ts'])
     
     total_records = sum(len(records) for records in future_data.values())
-    print(f"[✅] Future data loaded: {len(future_data)} assets, {total_records} total records")
+    print(f"[✅] Future data loaded: {len(future_data)} coins, {total_records} total records")
     
     return future_data
 
+
 def parse_timestamp_safe(timestamp_input):
-    """
-    Safely parse timestampz (compatible with v11_2)
-    
-    Args:
-        timestamp_input: timestampz string or datetime object
-    
-    Returns:
-        datetime or None: parsed datetime object
-    """
+    """Safely parse timestampz (v11_2 compatible)."""
     try:
         return safe_parse_timestampz(timestamp_input)
     except Exception as e:
         print(f"[⚠️] Failed to parse timestampz: {timestamp_input}, error: {e}")
         return None
 
+
 def run_labeling():
-    """
-    Run price_trend labeling pipeline
-    """
+    """Run price_trend labeling pipeline."""
     print("=== Labeling Pipeline Started ===")
     try:
         now = datetime.utcnow()
@@ -199,16 +154,13 @@ def run_labeling():
         
         print(f"[⏰] Initial cutoff time: {initial_cutoff_time}")
         
-        # First, get all data to determine the actual cutoff time
+        # Load all unlabeled data first to determine the real cutoff time
         all_unlabeled_data = []
         offset = 0
         
-        # Get all unlabeled data up to the current time (to find data 4 hours later)
-        # Fetch all unlabeled data without timestamp filtering
-        
         while True:
             resp = client.table("technical_indicators") \
-                .select("id, asset, feature_2, timestamp") \
+                .select("id, coin, ema, timestamp") \
                 .is_("price_trend", "null") \
                 .order("timestamp", desc=True) \
                 .range(offset, offset + LABELING_BATCH_SIZE - 1) \
@@ -229,7 +181,7 @@ def run_labeling():
             print("=== No records to label ===")
             return {"message": "No records to label"}, 200
         
-        # Find the latest timestamp among the fetched data
+        # Determine actual cutoff based on the newest available timestamp
         parsed_timestamps = []
         for record in all_unlabeled_data:
             parsed_ts = parse_timestamp_safe(record['timestamp'])
@@ -241,14 +193,12 @@ def run_labeling():
             return {"message": "No valid timestamps found"}, 200
         
         latest_timestamp = max(parsed_timestamps)
-        
-        # Actual cutoff time = 5 hours before the latest timestamp
         actual_cutoff_time = latest_timestamp - timedelta(hours=5)
         
         print(f"[📅] Latest timestamp in data: {latest_timestamp}")
         print(f"[⏰] Actual cutoff time: {actual_cutoff_time}")
         
-        # Filter data for records before the actual cutoff time
+        # Filter to rows older than the cutoff
         filtered_data = []
         for record in all_unlabeled_data:
             parsed_ts = parse_timestamp_safe(record['timestamp'])
@@ -262,14 +212,14 @@ def run_labeling():
             print("=== No records to label (all records are less than 5 hours old) ===")
             return {"message": "No records to label (all records are less than 5 hours old)"}, 200
         
-        # Load future data based on the earliest cutoff_time (once)
+        # Load future EMA data once based on earliest cutoff
         min_future_timestamp = actual_cutoff_time.isoformat()
         future_data = load_future_data_efficiently(min_future_timestamp)
         
         updated_count = 0
         batch_count = 0
         
-        # Process filtered data in batches
+        # Process in batches
         batch_size = LABELING_BATCH_SIZE
         for i in range(0, len(filtered_data), batch_size):
             batch = filtered_data[i:i + batch_size]
@@ -278,28 +228,24 @@ def run_labeling():
             
             for record in batch:
                 try:
-                    original_asset = record['asset']
-                    normalized_asset = normalize_asset_name_labeling(original_asset)
-                    current_feature_2 = float(record['feature_2'])
+                    original_coin = record['coin']
+                    normalized_coin = normalize_coin_name_labeling(original_coin)
+                    current_ema = float(record['ema'])
                     timestamp = parse_timestamp_safe(record['timestamp'])
                     if timestamp is None:
                         print(f"[❌] Failed to parse timestamp for record {record.get('id', 'unknown')}")
                         continue
                     
-                    # Find future feature
-                    future_feature_2 = find_future_feature(normalized_asset, timestamp, future_data)
+                    future_ema = find_future_ema(normalized_coin, timestamp, future_data)
                     
-                    # Price trend determination logic (same as SQL)
-                    if future_feature_2 is None:
-                        # No data after 4 hours = down
+                    if future_ema is None:
                         if timestamp + timedelta(hours=4) <= now:
                             price_trend = 'down'
                         else:
-                            # Still less than 4 hours = do not process
                             continue
-                    elif future_feature_2 > current_feature_2:
+                    elif future_ema > current_ema:
                         price_trend = 'up'
-                    elif future_feature_2 < current_feature_2:
+                    elif future_ema < current_ema:
                         price_trend = 'down'
                     else:
                         price_trend = 'neutral'
@@ -313,7 +259,6 @@ def run_labeling():
                     print(f"[❌] Failed to process record {record.get('id', 'unknown')}: {e}")
                     continue
             
-            # Execute batch updates
             if batch_updates:
                 try:
                     for update in batch_updates:
@@ -334,4 +279,4 @@ def run_labeling():
         
     except Exception as e:
         print(f"[💥 Labeling Pipeline Error] {e}")
-        return {"error": str(e)}, 500 
+        return {"error": str(e)}, 500

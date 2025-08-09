@@ -9,51 +9,51 @@ from utils.memory_utils import safe_memory_cleanup, monitor_memory_usage, check_
 
 # ======================== Sequence Caching System ========================
 
-# Global cache variables
+# Global caches
 _cached_sequences: Dict[str, List] = {}
 _cached_train_data = None
 _cached_test_data = None
 
 def get_sequences(data, window_size: int, force_regenerate: bool = False, cache_key: str = "default"):
-    """Return cached sequences by window_size (anonymized)"""
+    """Cache and return sequences per window_size (v11_2 compatible)."""
     global _cached_sequences
     
     full_cache_key = f"{cache_key}_{window_size}"
     
-    # Force regeneration or if not in cache
+    # Generate if forced or missing in cache
     if force_regenerate or full_cache_key not in _cached_sequences:
         start_time = time.time()
-        print(f"🔄 Generating sequences for {cache_key} window_size={window_size}...")
+        print(f"🔄 {cache_key} window_size={window_size} generating sequences...")
         sequences = batch_sequence_processing(data, window_size)
         _cached_sequences[full_cache_key] = sequences
         elapsed = time.time() - start_time
-        print(f"✅ {cache_key} window_size={window_size} sequence cache completed ({len(sequences):,} sequences, {elapsed:.1f}s)")
+        print(f"✅ {cache_key} window_size={window_size} cached sequences ({len(sequences):,} items, {elapsed:.1f}s)")
     else:
-        print(f"♻️ Using cached sequences for {cache_key} window_size={window_size} ({len(_cached_sequences[full_cache_key]):,} sequences)")
+        print(f"♻️ {cache_key} window_size={window_size} using cached sequences ({len(_cached_sequences[full_cache_key]):,} items)")
     
     return _cached_sequences[full_cache_key]
 
 def clear_sequence_cache():
-    """Clear sequence cache"""
+    """Clear sequence cache."""
     global _cached_sequences
     cache_count = len(_cached_sequences)
     _cached_sequences.clear()
-    print(f"🧹 Sequence cache cleared ({cache_count} items removed)")
+    print(f"🧹 Cleared sequence cache ({cache_count} entries removed)")
 
 def print_cache_status():
-    """Print cache status"""
+    """Print cache status."""
     print(f"📊 Sequence cache status:")
     for key, sequences in _cached_sequences.items():
         print(f"  - {key}: {len(sequences):,} sequences")
-    print(f"  - Total {len(_cached_sequences)} cache items")
+    print(f"  - total {len(_cached_sequences)} cache entries")
 
 def safe_parse_timestamp(timestamp_series):
-    """Parse all timestamp formats (anonymized)"""
+    """Parse timestamps robustly across formats (v11_2 compatible)."""
     try:
-        # Already datetime type
+        # Already datetime dtype
         if pd.api.types.is_datetime64_any_dtype(timestamp_series):
             return timestamp_series
-        # String type
+        # String dtype
         elif timestamp_series.dtype == 'object':
             try:
                 return pd.to_datetime(timestamp_series, format='ISO')
@@ -66,79 +66,79 @@ def safe_parse_timestamp(timestamp_series):
             # Numeric timestamp
             return pd.to_datetime(timestamp_series, unit='s')
     except Exception as e:
-        print(f"⚠️ Timestamp parsing error: {e}")
+        print(f"⚠️ Timestamp parse error: {e}")
         return pd.to_datetime(timestamp_series, errors='coerce')
 
 def split_by_time_gap(df, max_gap_hours=24):
-    """Split at points with more than 24 hours difference (anonymized)"""
+    """Split sequences when time gap exceeds max_gap_hours (v11_2 compatible)."""
     split_data = []
     
-    for asset, asset_df in df.groupby('asset'):
-        asset_df_sorted = asset_df.sort_values('timestamp').reset_index(drop=True)
+    for coin, coin_df in df.groupby('coin'):
+        coin_df_sorted = coin_df.sort_values('timestamp').reset_index(drop=True)
         
-        if len(asset_df_sorted) <= 1:
-            if len(asset_df_sorted) == 1:
-                split_data.append(asset_df_sorted)
+        if len(coin_df_sorted) <= 1:
+            if len(coin_df_sorted) == 1:
+                split_data.append(coin_df_sorted)
             continue
         
         sequences = []
         current_start = 0
         
-        for i in range(1, len(asset_df_sorted)):
-            time_diff = asset_df_sorted.iloc[i]['timestamp'] - asset_df_sorted.iloc[i-1]['timestamp']
+        for i in range(1, len(coin_df_sorted)):
+            time_diff = coin_df_sorted.iloc[i]['timestamp'] - coin_df_sorted.iloc[i-1]['timestamp']
             
             if time_diff > pd.Timedelta(hours=max_gap_hours):
-                sequences.append(asset_df_sorted.iloc[current_start:i].copy())
+                sequences.append(coin_df_sorted.iloc[current_start:i].copy())
                 current_start = i
         
-        sequences.append(asset_df_sorted.iloc[current_start:].copy())
+        sequences.append(coin_df_sorted.iloc[current_start:].copy())
         split_data.extend(sequences)
     
     return split_data
 
 def batch_sequence_processing(split_data, window_size, batch_size=1000):
-    """Generate sequences with memory-efficient batch processing (anonymized)"""
+    """Generate sequences with memory-efficient batching (v11_2 compatible)."""
     all_sequences = []
     
-    # Calculate total statistics
+    # Compute dataset-wide stats
     total_instances = sum(len(chunk) for chunk in split_data if len(chunk) >= window_size)
     potential_sequences = sum(len(chunk) - window_size + 1 for chunk in split_data if len(chunk) >= window_size)
     
     processed_chunks = 0
     total_chunks = len([chunk for chunk in split_data if len(chunk) >= window_size])
     
-    print(f"🔄 Starting sequence generation (window_size={window_size}):")
-    print(f"  - Total instances: {total_instances:,}")
-    print(f"  - Potential sequences: {potential_sequences:,}")
-    print(f"  - Chunks to process: {total_chunks}")
+    print(f"🔄 Sequence generation started (window_size={window_size}):")
+    print(f"  - total instances: {total_instances:,}")
+    print(f"  - potential sequences: {potential_sequences:,}")
+    print(f"  - chunks to process: {total_chunks}")
     
     for chunk in split_data:
         if len(chunk) >= window_size:
             processed_chunks += 1
             
-            # Process by batch
+            # Process per batch
             for i in range(0, len(chunk), batch_size):
                 batch_end = min(i + batch_size, len(chunk))
                 batch_data = chunk.iloc[i:batch_end]
                 
-                # Handle overlap (window_size-1)
+                # Overlap handling (window_size-1)
                 if i > 0:
                     overlap_start = max(0, i - (window_size - 1))
                     overlap_data = chunk.iloc[overlap_start:i]
                     batch_data = pd.concat([overlap_data, batch_data], ignore_index=True)
                 
-                # Generate sequences using sliding window
+                # Create sequences via sliding window
                 for j in range(len(batch_data) - window_size + 1):
                     sequence = batch_data.iloc[j:j+window_size]
                     all_sequences.append(sequence)
     
-    # Final statistics output
+    # Final stats
     if all_sequences:
-        print(f"✅ Sequence generation completed:")
-        print(f"  - Generated sequences: {len(all_sequences):,}")
-        print(f"  - Potential sequences: {potential_sequences:,}")
-        print(f"  - Data utilization: {len(all_sequences)/potential_sequences*100:.1f}%")
-        print(f"  - Processed chunks: {processed_chunks}/{total_chunks}")
+        print(f"✅ Sequence generation complete:")
+        print(f"  - generated sequences: {len(all_sequences):,}")
+        print(f"  - potential sequences: {potential_sequences:,}")
+        print(f"  - data utilization: {len(all_sequences)/potential_sequences*100:.1f}%")
+        print(f"  - processed chunks: {processed_chunks}/{total_chunks}")
     else:
         print("⚠️ Sequence generation failed: insufficient data")
     
@@ -146,15 +146,15 @@ def batch_sequence_processing(split_data, window_size, batch_size=1000):
 
 def generate_sliding_windows(df, window_size, feature_cols, max_time_gap_hours=24):
     """
-    Generates sliding windows from a DataFrame for each coin, considering time continuity.
+    Generate sliding windows per coin considering temporal continuity.
     Each window is a numpy array of shape (window_size, feature_dim).
-    (Compatibility with v11_2)
+    (kept for v11_2 compatibility)
     """
-    # Process using v11_2 method
+    # v11_2 style processing
     split_data = split_by_time_gap(df, max_gap_hours=max_time_gap_hours)
     sequences = batch_sequence_processing(split_data, window_size)
     
-    # Convert to original format (list of numpy arrays)
+    # Convert to legacy numpy list
     all_windows = []
     for sequence in sequences:
         if len(sequence) >= window_size:
@@ -165,7 +165,7 @@ def generate_sliding_windows(df, window_size, feature_cols, max_time_gap_hours=2
     return all_windows
 
 def aggregate_coin_scores(scores):
-    """Aggregate coin scores (compatibility with existing code)"""
+    """Aggregate scores across windows for a coin (legacy compatibility)."""
     avg_score = float(np.mean(scores))
     pricetrend = "up" if avg_score > 0 else "down"
     return {
@@ -175,20 +175,22 @@ def aggregate_coin_scores(scores):
     }
 
 def rolling_window_cv_split(sequences, n_splits=3):
-    """Rolling Window CV split (compatibility with v11_2)"""
+    """Overlapping rolling-window CV split (v11_2 compatible)."""
     if not sequences:
         return []
     
     import random
-    # Sort by time and shuffle within the same timestamp
+    from config import ROLLING_CV_TRAIN_RATIO, ROLLING_CV_VAL_RATIO, ROLLING_CV_STRIDE_RATIO
+    
+    # Sort by time and break ties randomly
     sequences.sort(key=lambda x: (x['timestamp'].min(), random.random()))
     
     total_sequences = len(sequences)
     
-    # Calculate size for each fold (use a larger window for overlap)
-    train_window_size = int(total_sequences * 0.6)  # 60% for training
-    val_window_size = int(total_sequences * 0.2)    # 20% for validation
-    stride = int(total_sequences * 0.2)             # 20% stride between folds
+    # Compute fold sizes (with overlap)
+    train_window_size = int(total_sequences * ROLLING_CV_TRAIN_RATIO)
+    val_window_size = int(total_sequences * ROLLING_CV_VAL_RATIO)
+    stride = int(total_sequences * ROLLING_CV_STRIDE_RATIO)
     
     cv_folds = []
     for i in range(n_splits):
@@ -196,11 +198,11 @@ def rolling_window_cv_split(sequences, n_splits=3):
         train_start = i * stride
         train_end = min(train_start + train_window_size, total_sequences)
         
-        # Validation window starts right after train
+        # Validation window starts right after train window
         val_start = train_end
         val_end = min(val_start + val_window_size, total_sequences)
         
-        # Add only if valid data exists
+        # Append only valid splits
         if train_end > train_start and val_end > val_start:
             train_sequences = sequences[train_start:train_end]
             val_sequences = sequences[val_start:val_end]
@@ -214,19 +216,19 @@ def rolling_window_cv_split(sequences, n_splits=3):
     return cv_folds
 
 class CoinTimeSeriesDataset(Dataset):
-    """v11_2 compatible time series dataset (sequence-based)"""
+    """Time series dataset (sequence-based), v11_2 compatible."""
     def __init__(self, sequences, feature_cols):
         self.samples = []
         
         for sequence in sequences:
-            if len(sequence) >= 1:  # Minimum 1 instance
+            if len(sequence) >= 1:  # require at least one instance
                 X = sequence[feature_cols].values.astype(np.float32)
                 y = sequence['label'].values.astype(np.int64)
                 
                 # Use the label of the last instance in the sequence
                 self.samples.append((X, y[-1]))
         
-        # print(f"📊 {len(self.samples)} sequence samples generated")  # Avoid duplicate output
+        # print(f"📊 {len(self.samples)} sequence samples")  # avoid duplicate logs
 
     def __len__(self):
         return len(self.samples)
@@ -237,26 +239,26 @@ class CoinTimeSeriesDataset(Dataset):
 
 
 class CompatibleCoinTimeSeriesDataset(Dataset):
-    """Legacy dataset for compatibility with existing code"""
+    """Legacy dataset kept for backward compatibility with existing code."""
     def __init__(self, df, window_size, feature_cols, max_time_gap_hours=24):
         self.samples = []
         self.max_time_gap = pd.Timedelta(hours=max_time_gap_hours)
         
-        # Generate sequences using v11_2 method
+        # Create sequences (v11_2 style)
         split_data = split_by_time_gap(df, max_gap_hours=max_time_gap_hours)
         sequences = batch_sequence_processing(split_data, window_size)
         
-        # Convert to original format
+        # Convert to legacy format
         for seq_idx, sequence in enumerate(sequences):
             if len(sequence) >= window_size:
                 X = sequence[feature_cols].values.astype(np.float32)
                 y = sequence['label'].values.astype(np.int64)
                 
-                # Generate sliding windows
+                # Create sliding windows
                 for i in range(len(X) - window_size + 1):
                     window_X = X[i:i+window_size]
                     window_y = y[i+window_size-1]
-                    coin_info = sequence['asset'].iloc[0] if 'asset' in sequence.columns else f"seq_{seq_idx}"
+                    coin_info = sequence['coin'].iloc[0] if 'coin' in sequence.columns else f"seq_{seq_idx}"
                     self.samples.append((window_X, window_y, coin_info))
     
     def __len__(self):
