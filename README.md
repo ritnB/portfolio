@@ -1,214 +1,68 @@
-# 🚀 Asset Time Series Prediction Platform
+## 👋 Welcome! Thanks for stopping by
 
-A sophisticated machine learning platform for asset (e.g., cryptocurrency or financial) price movement prediction using a **Transformer** architecture, with automated model retraining and real-time inference capabilities. All sensitive business logic, feature engineering, and asset mapping are anonymized for public portfolio use.
+This repo is a hub for my AI and data projects. Some production details are anonymized for portfolio sharing, but each project is fully navigable and documented. For usage and setup, check the `README.md` inside each project folder.
 
-## 🌟 Features
+## 🔎 Projects at a glance
 
-- **Advanced ML Architecture**: Implements transformer-based model for time series forecasting (anonymized feature set)
-- **Automated Pipeline**: Complete MLOps pipeline with training, inference, and retraining automation
-- **Real-time Predictions**: Flask API for real-time asset trend predictions
-- **Cloud Integration**: Seamless integration with Google Cloud Storage and Supabase
-- **Model Monitoring**: Automated accuracy monitoring with threshold-based retraining
-- **Scalable Design**: Configurable and anonymized feature engineering and model parameters
+- **Agentic AI**: An LLM-powered multi-agent system that plans → writes → evaluates content, calling tools for trend, sentiment, and prediction analysis to improve results. Includes an optional end-to-end flow up to Threads posting.
+  - Tech: Python, LangChain, LLM providers, tool calling (trend/sentiment/prediction), lightweight app server
+  - Docs: [Agentic AI/README.md](Agentic%20AI/README.md)
 
-## 🏗️ Architecture
+- **Crypto Prediction**: Transformer-based time series modeling for asset movement prediction with automated retraining and verification pipelines, real-time inference API, and GCS/Supabase integration.
+  - Tech: Python, PyTorch, Flask, Supabase (PostgreSQL), GCS, Optuna, Docker
+  - Docs: [Crypto Prediction/README.md](Crypto%20Prediction/README.md)
 
-```
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   Flask API     │────│  ML Pipelines    │────│  Data Storage   │
-│  - /timeseries  │    │  - Training      │    │  - Database     │
-│  - /verify      │    │  - Inference     │    │  - Cloud Storage│
-│  - /retrain     │    │  - Retraining    │    │  - Local Models │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
-```
+- **QNN Security**: Notebooks exploring Quantum Neural Networks for security traffic classification using datasets like UNSW-NB15.
+  - Tech: Python, Jupyter Notebooks, quantum-circuit/QNN concept experiments
+  - Docs: [QNN Security/README.md](QNN%20Security/README.md)
 
-## 🛠️ Tech Stack
+- **Trajectory-Based UAV Location Integrity Analysis**: Data pipelines and notebooks to detect integrity anomalies (spoofing/attacks) from drone trajectories and motion patterns.
+  - Tech: Python, preprocessing/visualization, time-series/sequence builder notebooks
+  - Folder: [Trajectory-Based UAV Location Integrity Analysis/](Trajectory-Based%20UAV%20Location%20Integrity%20Analysis/)
 
-- **Backend**: Python, Flask
-- **ML Framework**: PyTorch, scikit-learn, Transformers
-- **Database**: Supabase (PostgreSQL)
-- **Cloud Storage**: Google Cloud Storage
-- **Hyperparameter Tuning**: Optuna
-- **Data Processing**: Pandas, NumPy
-- **Deployment**: Docker, Gunicorn
-
-## 📦 Project Structure
+## 🗂️ Repo layout
 
 ```
-├── app.py                          # Flask API entry point
-├── config.py                       # Environment configuration (anonymized)
-├── requirements.txt                # Dependencies
-├── Dockerfile                      # Container configuration
-│
-├── pipelines/                      # ML pipelines
-│   ├── pipeline_timeseries.py      # Time series prediction pipeline
-│   ├── pipeline_verify.py          # Prediction verification pipeline
-│   ├── pipeline_retrain.py         # Automated retraining pipeline
-│   ├── pipeline_incremental.py     # Incremental learning pipeline
-│   ├── pipeline_labeling.py        # Data labeling pipeline
-│   └── __init__.py
-│
-├── models/                         # Model definitions and storage
-│   ├── timeseries_model.py         # Transformer model architecture (anonymized)
-│   ├── *.pt                        # Trained model weights
-│   └── *.pkl                       # Feature scalers
-│
-├── data/                           # Data processing modules
-│   ├── preprocess.py               # Data preprocessing utilities (anonymized features)
-│   └── supabase_io.py              # Database I/O operations
-│
-├── inference/                      # Model inference
-│   └── timeseries_inference.py     # Prediction execution
-│
-├── trainers/                       # Model training
-│   └── train_patchtst.py           # Model training script
-│
-├── utils/                          # Utility modules
-│   ├── gcs_utils.py                # Google Cloud Storage utilities
-│   └── training_utils.py           # Training helper functions (anonymized hyperparameters)
-│
-└── debug_tools/                    # Debugging/diagnostics tools
-    └── debug_tools.py
+portfolio/
+├─ Agentic AI/
+├─ Crypto Prediction/
+├─ QNN Security/
+└─ Trajectory-Based UAV Location Integrity Analysis/
 ```
 
-## 🚀 Quick Start
+Each folder includes a project-specific `README.md`, `requirements.txt`, and runnable scripts or notebooks.
 
-### Prerequisites
+## 🚀 Quick tour
 
-- Python 3.8+
-- Database system (Supabase recommended)
-- Cloud storage bucket (for production)
-
-### Installation
-
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd <project-directory>
-   ```
-
-2. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-3. **Set up environment variables**
-   ```bash
-   # Create .env file with your configurations
-   ENV_TYPE=local
-   SUPABASE_URL=your_database_url
-   SUPABASE_KEY=your_database_key
-   # ...other required variables (see config.py)
-   ```
-
-4. **Run the application**
-   ```bash
-   python app.py
-   ```
-
-## 📡 API Endpoints
-
-### `POST /timeseries`
-Triggers the time series prediction pipeline
+1) Clone the repo
 ```bash
-curl -X POST http://localhost:8080/timeseries
+git clone <repository-url>
+cd portfolio
 ```
-
-### `POST /verify`
-Runs prediction verification against historical data
+2) Jump into any project and follow its `README.md`
 ```bash
-curl -X POST http://localhost:8080/verify
+cd "Crypto Prediction"
+# or
+cd "Agentic AI"
 ```
+3) A Python virtual environment is recommended. Install deps from each folder’s `requirements.txt`.
 
-### `POST /retrain`
-Initiates model retraining based on performance metrics
-```bash
-curl -X POST http://localhost:8080/retrain
-```
+## 🧰 Common toolbox
 
-### `POST /incremental`
-Triggers incremental learning pipeline
-```bash
-curl -X POST http://localhost:8080/incremental
-```
+- **AI/ML**: PyTorch, scikit-learn, Transformers
+- **LLM & Agents**: LangChain, prompt design, tool calling patterns
+- **Backend/Service**: Python (Flask, etc.), lightweight APIs, Docker
+- **Data/Cloud**: Pandas/NumPy, Google Cloud Storage, Supabase (PostgreSQL)
+- **Experimentation**: Jupyter, preprocessing/analysis pipelines
 
-### `POST /labeling`
-Triggers data labeling pipeline
-```bash
-curl -X POST http://localhost:8080/labeling
-```
+## 🙌 What I care about
 
-### `GET /`
-Health check endpoint
-```bash
-curl http://localhost:8080/
-```
+- A cohesive flow from **problem framing → data pipeline → model/agent design → ops automation**
+- Production-ready practices: **configurability, observability/monitoring, automated retraining**
+- Clear structure and documentation for smooth team collaboration
 
-## 🧠 Model & Feature Details (Anonymized)
+## 📬 Contact
 
-### Transformer Architecture
-- **Attention-based approach**: Leverages self-attention mechanisms for temporal dependencies
-- **Configurable & anonymized**: Model dimensions, layers, and hyperparameters are anonymized for public release
-- **Multi-feature input**: Processes multiple anonymized features simultaneously
-- **Sequence modeling**: Handles variable-length time series data
+Always happy to chat about projects or collaborations. Open an issue/PR or reach out via the profile links.
 
-### Supported Assets
-- Generic asset mapping system (anonymized)
-- Easily extensible to additional financial instruments
-
-### Feature Engineering
-- Multiple anonymized features (see `config.py`)
-- Automated feature scaling and normalization
-- All feature names and logic are anonymized for portfolio use
-
-## 🔄 MLOps Pipeline
-
-1. **Data Ingestion**: Automated fetching of market data and indicators
-2. **Model Training**: Transformer training with anonymized hyperparameter optimization
-3. **Model Deployment**: Automatic model versioning and cloud storage
-4. **Inference**: Real-time prediction generation
-5. **Monitoring**: Performance tracking and automated retraining triggers
-6. **Verification**: Historical prediction validation
-
-## 🐳 Docker Deployment
-
-```bash
-# Build the image
-docker build -t asset-prediction-platform .
-
-# Run the container
-docker run -p 8080:8080 --env-file .env asset-prediction-platform
-```
-
-## 📈 Performance Monitoring
-
-The platform includes automated performance monitoring:
-- **Configurable thresholds**: Adjustable accuracy requirements (anonymized in config)
-- **Rolling evaluation**: Time-window based performance calculation
-- **Auto-retraining**: Triggered when performance drops below thresholds
-- **Model versioning**: Timestamped model artifacts in cloud storage
-
-## ⚙️ Configuration
-
-Key configuration options (all anonymized):
-- Model architecture parameters
-- Training hyperparameters
-- Performance thresholds
-- Feature selection
-- Data processing parameters
-
-## 🔒 Security & Privacy
-
-- Environment-based configuration management
-- Secure credential handling
-- All business logic, features, and parameters are anonymized for public release
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-*A sophisticated machine learning platform demonstrating advanced time series forecasting with transformer architecture and MLOps best practices. All sensitive business logic and features are anonymized for portfolio sharing.*
+— Thanks for visiting. Browse freely, run lightly 😊
