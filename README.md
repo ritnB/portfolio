@@ -18,7 +18,11 @@ This repo is a hub for my AI and data projects. Some production details are anon
 
 - **Trajectory-Based UAV Location Integrity Analysis**: Data pipelines and notebooks to detect integrity anomalies (spoofing/attacks) from drone trajectories and motion patterns.
   - Tech: Python, preprocessing/visualization, time-series/sequence builder notebooks
-  - Folder: [Trajectory-Based UAV Location Integrity Analysis/](Trajectory-Based%20UAV%20Location%20Integrity%20Analysis/)
+  - Folder: [Trajectory-Based UAV Location Integrity Analysis/](Trajectory-Based%20UAV%20Location%20Integrity%20Analysis/README.md)
+
+- **U-CLCRec**: Uncertainty-aware Contrastive Learning for Cold-start Recommendation — a graph-based recommender system leveraging Gaussian embeddings and dual contrastive learning to tackle the cold-start problem.  
+  - Tech: Python, PyTorch, LightGCN, Sentence-BERT (all-MiniLM-L6-v2), AdamW, Colab GPU  
+  - Docs: [U-CLCRec/README.md](Cold-Start@20Recommendation/README.md)
 
 ## 🗂️ Repo layout
 
@@ -27,7 +31,8 @@ portfolio/
 ├─ Agentic AI/
 ├─ Crypto Prediction/
 ├─ QNN Security/
-└─ Trajectory-Based UAV Location Integrity Analysis/
+├─ Trajectory-Based UAV Location Integrity Analysis/
+└─ Cold-Start Recommendation/
 ```
 
 Each folder includes a project-specific `README.md`, `requirements.txt`, and runnable scripts or notebooks.
